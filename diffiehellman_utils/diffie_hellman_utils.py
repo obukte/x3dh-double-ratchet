@@ -204,7 +204,6 @@ class DiffieHellmanUtils:
 
     def sign_prekey(self, signing_private_key, prekey_public):
         # Simulate a signature by "encrypting" a hash of the prekey
-        # In practice, use a proper digital signature
         hash_digest = hashes.Hash(hashes.SHA256())
         hash_digest.update(prekey_public.to_bytes((prekey_public.bit_length() + 7) // 8, byteorder='big'))
         hashed_prekey = hash_digest.finalize()

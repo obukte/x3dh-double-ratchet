@@ -9,7 +9,7 @@ from diffiehellman_utils import DiffieHellmanUtils
 
 # Hardcoded values for testing
 shared_secret = b'some_shared_secret'
-nonce = os.urandom(12)  # Generate once, use this for both encryption and decryption in test
+nonce = os.urandom(12)
 message = "Test message"
 
 # Encrypt
