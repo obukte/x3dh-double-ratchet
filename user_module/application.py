@@ -3,7 +3,6 @@ from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
-# Assuming your User class is defined as before
 
 user = User(name="User1", server_url="http://127.0.0.1:5020", dh_utils=dh_utils, max_one_time_prekeys=5)
 

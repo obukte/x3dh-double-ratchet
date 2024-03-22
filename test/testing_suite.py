@@ -1,13 +1,9 @@
-# Assume diffie_hellman_utils.py is properly implemented and imported
+# Assume dh_utils.py is properly implemented and imported
 import os
 
 import cryptography
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from user_module.user import User
-from diffiehellman_utils import DiffieHellmanUtils
-
-# Hardcoded values for testing
 shared_secret = b'some_shared_secret'
 nonce = os.urandom(12)
 message = "Test message"

@@ -6,7 +6,7 @@ import requests
 import cryptography.exceptions
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from diffiehellman_utils.diffie_hellman_utils import DiffieHellmanUtils
+from diffiehellman_utils.dh_utils import DiffieHellmanUtils
 
 dh_utils = DiffieHellmanUtils()
 name = "User1"

@@ -1,4 +1,3 @@
-# Assume diffie_hellman_utils.py is properly implemented and imported
 from user_module.user import User
 from diffiehellman_utils import DiffieHellmanUtils
 
