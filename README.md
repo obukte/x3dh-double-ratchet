@@ -1,4 +1,5 @@
-# Secure Messaging Application
+# Extended Triple Diffie-Hellman w/ Double Ratcheting 
+## Secure Messaging Application
 
 This project implements a secure messaging application using modern cryptographic principles, including the Modulo-based Diffie-Hellman Exchange, Extended Triple Diffie-Hellman (X3DH) Public Key Exchange method, and Double Ratcheting for Forward Secrecy. These protocols provide robust security measures for end-to-end encrypted messaging, similar to those found in popular messaging applications like WhatsApp and Signal.
 
