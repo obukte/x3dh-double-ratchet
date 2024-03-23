@@ -131,19 +131,17 @@ class DiffieHellmanUtils:
         key = hkdf.derive(shared_secret)
         return key
 
-    def kdf(self, shared_secret):
+    def kdf(self, key, info):
 
         hkdf = HKDF(
             algorithm=hashes.SHA256(),
             length=32,
             salt=None,
-            info=b'double_ratchet',
+            info=info,
             backend=default_backend()
         )
 
-        derived_key = hkdf.derive(shared_secret)
-
-        return bytes(derived_key)
+        return hkdf.derive(key)
 
     def generate_base_and_prime(self):
         prime = self.generate_prime()

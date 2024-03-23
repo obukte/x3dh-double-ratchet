@@ -1,4 +1,4 @@
-from user_module.user import User
+from user_module.User import user
 from diffiehellman_utils import DiffieHellmanUtils
 
 def main():
@@ -6,8 +6,8 @@ def main():
     dh_utils = DiffieHellmanUtils()
 
     # Initialize Alice and Bob
-    alice = User("Alice", server_url, dh_utils, max_one_time_prekeys=5)
-    bob = User("Bob", server_url, dh_utils, max_one_time_prekeys=5)
+    alice = user("Alice", server_url, dh_utils, max_one_time_prekeys=5)
+    bob = user("Bob", server_url, dh_utils, max_one_time_prekeys=5)
 
     # Simulate Alice sending a secure message to Bob
     message_to_bob = "Hello, Bob! This is Alice."

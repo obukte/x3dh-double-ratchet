@@ -1,11 +1,11 @@
-from user_module.user import User
+from user_module.User import user
 from diffiehellman_utils.dh_utils import DiffieHellmanUtils
 
 def main():
     # Initialize users Alice and Bob
     dh_utils = DiffieHellmanUtils()
-    alice = User("Alice", "http://127.0.0.1:5020", dh_utils, 5)
-    bob = User("Bob", "http://127.0.0.1:5020", dh_utils, 5)
+    alice = user("Alice", "http://127.0.0.1:5020", dh_utils, 5)
+    bob = user("Bob", "http://127.0.0.1:5020", dh_utils, 5)
 
     # Send messages to trigger DH ratchet update
     print("Alice sends message 1 to Bob")
