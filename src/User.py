@@ -178,10 +178,9 @@ class User:
                 'chosen_prekey': chosen_prekey,
             }
 
-        # Encrypt the message with the current sending chain key
-        encrypted_message, nonce, message_number = self.encrypt_with_chain_key(recipient_id, message)
-
         message_number = self.ratchet_states[recipient_id]['Ns']
+        # Encrypt the message with the current sending chain key
+        encrypted_message, nonce = self.encrypt_with_chain_key(recipient_id, message, message_number)
 
         # Prepare and send the data
         data = {
@@ -213,41 +212,56 @@ class User:
             return
 
         their_dh_public = self.ratchet_states[sender_id]['DHr']
+        # get ciphertext from data
+        ciphertext = base64.b64decode(data['encrypted_message'])
+        nonce = base64.b64decode(data['nonce'])
+
+        if not encrypted_message or not nonce or message_number is None:
+            print("Missing data in the received message.")
+            return
 
         # Extract message_number from the message data
         message_number = data.get('message_number')
+
+        message_number = int(message_number)
+        expected_message_number = self.ratchet_states[sender_id]['Nr']
+
         if message_number is None:
             print("Message number is missing in the received data.")
             return
         message_number = int(message_number)
-
-        ciphertext = base64.b64decode(data['encrypted_message'])
-        nonce = base64.b64decode(data['nonce'])
 
         if 'new_dh_public_key' in data:
             # A new DH public ket indicates that the sender has performed a DH ratcher step
             new_dh_public_key = int(data['new_dh_public_key'], 16)
             self.perform_dh_ratchet_step(sender_id, new_dh_public_key)
 
-        # Decrypt the message using the current receiving chain key
-        try:
-            # Attempt to decrypt with current chain key
-            decrypted_message = self.decrypt_with_chain_key(sender_id, their_dh_public, message_number,  ciphertext, nonce)
+        decrypted_message = None
+
+        if message_number == expected_message_number:
+            # Decrypt message with current chain key
+            decrypted_message = self.decrypt_with_chain_key(sender_id, ciphertext, nonce,message_number)
             if decrypted_message is not None:
-                print(f"Received decrypted message from {sender_id}: {decrypted_message}")
-                # Successfully decrypted, update receiving chain key
-                self.update_receiving_chain_key(sender_id)
+                self.ratchet_states[sender_id]['Nr'] += 1
+
+        elif message_number > expected_message_number:
+            # Attempt to decrypt with skipped message key
+            decrypted_message = self.decrypt_skipped_message(sender_id, message_number, ciphertext,
+                                                             nonce)
+
+        if decrypted_message is not None:
+            print(f"Received decrypted message from {sender_id}: {decrypted_message}")
+            # Successfully decrypted, update receiving chain key
+            self.update_receiving_chain_key(sender_id)
+        else:
+            # Handle decryption failure (possibly due to out-of order message)
+            print("Failed to decrypt message, attempting to use skipped message keys")
+            # Attempt to decrypt using skipped message keys if any
+            decrypted_message = self.decrypt_skipped_message(sender_id, their_dh_public, message_number, ciphertext, nonce)
+            if decrypted_message:
+                print(f"Received decrypted message {sender_id} using skipped key: {decrypted_message}")
             else:
-                # Handle decryption failure (possibly due to out-of order message)
-                print("Failed to decrypt message, attempting to use skipped message keys")
-                # Attempt to decrypt using skipped message keys if any
-                decrypted_message = self.decrypt_skipped_message(sender_id, their_dh_public, message_number, ciphertext, nonce)
-                if decrypted_message:
-                    print(f"Received decrypted message {sender_id} using skipped key: {decrypted_message}")
-                else:
-                    print("Failed to decrypt message using skipped keys")
-        except Exception as e:
-            print(f"Error while decrypting message from {sender_id}: {str(e)}")
+                print("Failed to decrypt message using skipped keys")
 
     def update_receiving_chain_key(self, sender_id):
         # Update the receiving chain key (CKr) using KDF and increment Nr

@@ -21,8 +21,13 @@ To install the required libraries, run the following command in your terminal:
 It's recommended to use a virtual environment for running this project to manage dependencies efficiently. You can set up a virtual environment by running:
 
 ```bash
-pip install -r requirements.txt
 
-python -m venv venv
+python3 -m venv venv
 
 source venv/bin/activate
+
+pip install -r requirements.txt
+
+cd src
+
+python3 relay_server.py
