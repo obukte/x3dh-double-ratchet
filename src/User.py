@@ -2,8 +2,11 @@
 # coding: utf-8
 
 import os
+from json import JSONDecodeError
+
 import requests
 import cryptography.exceptions
+import base64
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes, padding
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -98,39 +101,41 @@ class User:
             print("Stopped polling for messages.")
 
     def sign_prekey(self, signing_private_key, prekey_public):
-        # Simulate a signature by "encrypting" a hash of the prekey
-        hash_digest = hashes.Hash(hashes.SHA256())
-        hash_digest.update(prekey_public.to_bytes((prekey_public.bit_length() + 7) // 8, byteorder='big'))
-        hashed_prekey = hash_digest.finalize()
-        # Simulate "encryption" with the private key
-        simulated_signature = pow(int.from_bytes(hashed_prekey, byteorder='big'), signing_private_key, self.prime)
-        return simulated_signature.to_bytes((simulated_signature.bit_length() + 7) // 8, byteorder='big')
+
+        signature = (signing_private_key + prekey_public) % self.prime
+        return signature
 
     def verify_signature(self, signing_public_key, prekey_public, signature):
-        # Simulate signature verification
-        hash_digest = hashes.Hash(hashes.SHA256())
-        hash_digest.update(prekey_public.to_bytes((prekey_public.bit_length() + 7) // 8, byteorder='big'))
-        hashed_prekey = hash_digest.finalize()
-        # Simulate "decryption" with the public key
-        decrypted_hash = pow(int.from_bytes(signature, byteorder='big'), signing_public_key, self.prime)
-        return decrypted_hash.to_bytes((decrypted_hash.bit_length() + 7) // 8, byteorder='big') == hashed_prekey
+        is_valid = (prekey_public - signature) % self.prime == 0
+        return is_valid
 
     def register(self):
         url = f'{self.server_url}/register'
         data = {
             'user_id': self.name,
             'public_key': {
-                'identity_key': str(self.identity_public),
-                'signed_prekey': str(self.signed_prekey_public),
-                'signed_prekey_signature': self.signed_prekey_signature.hex(),
-                'one_time_prekeys': [str(public_key) for _, _, public_key in self.one_time_prekeys]
+                'identity_key': base64.b64encode(self.int_to_bytes(self.identity_public)).decode('utf-8'),
+                'signed_prekey': base64.b64encode(self.int_to_bytes(self.signed_prekey_public)).decode('utf-8'),
+                'signed_prekey_signature': base64.b64encode(self.int_to_bytes(self.signed_prekey_signature)).decode('utf-8'),
+                'one_time_prekeys': [base64.b64encode(self.int_to_bytes(public_key)).decode('utf-8') for _, _, public_key in self.one_time_prekeys]
             }
         }
         response = requests.post(url, json=data)
+
         if response.status_code == 201:
             print(f"User {self.name} registered successfully.")
+            try:
+                response_data = response.json()
+                print(response_data)
+            except JSONDecodeError:
+                print("No JSON data in response")
         else:
-            print(f"Failed to register {self.name}: {response.json()}")
+            print(f"Failed to register {self.name}. Status code: {response.status_code}")
+            print(f"Resonse text: ", response.text)
+
+    def int_to_bytes(self, value):
+        # Utility method to convert an integer to bytes
+        return value.to_bytes((value.bit_length() + 7) // 8, byteorder='big')
 
     def generate_and_upload_new_prekeys(self):
         self.one_time_prekeys = [self.dh_utils.generate_one_time_preKey(self.generator, self.prime) for _ in
@@ -163,28 +168,28 @@ class User:
             shared_secret, ephemeral_public_key, chosen_prekey = self.perform_x3dh_key_agreement(recipient_id,
                                                                                                  recipient_keys)
 
-            # Initiate the double ratchet mechanism with the established shared secret
-            self.initiate_double_ratchet(recipient_id, shared_secret, ephemeral_public_key,
-                                         recipient_keys['identity_key'])
-
-            # Convert ephemeral_public_key to bytes then to a hex string
-            ephemeral_key_hex = ephemeral_public_key.to_bytes((ephemeral_public_key.bit_length() + 7) // 8, byteorder='big').hex()
-            chosen_prekey_hex = chosen_prekey.to_bytes((chosen_prekey.bit_length() + 7) // 8, byteorder='big').hex()
+            # Convert
+            ephemeral_key = base64.b64encode(self.int_to_bytes(ephemeral_public_key)).decode('utf-8')
+            chosen_prekey = base64.b64encode(self.int_to_bytes(chosen_prekey)).decode('utf-8')
+            base64.b64encode(self.int_to_bytes(ephemeral_public_key)).decode('utf-8')
 
             initial_package = {
-                'ephemeral_key': ephemeral_key_hex,
-                'chosen_prekey': chosen_prekey_hex,
+                'ephemeral_key': ephemeral_key,
+                'chosen_prekey': chosen_prekey,
             }
 
         # Encrypt the message with the current sending chain key
-        encrypted_message, nonce = self.encrypt_with_chain_key(recipient_id, message)
+        encrypted_message, nonce, message_number = self.encrypt_with_chain_key(recipient_id, message)
+
+        message_number = self.ratchet_states[recipient_id]['Ns']
 
         # Prepare and send the data
         data = {
             'sender_id': self.name,
             'recipient_id': recipient_id,
-            'encrypted_message': encrypted_message.hex(),
-            'nonce': nonce.hex(),
+            'encrypted_message': base64.b64encode(encrypted_message).decode('utf-8'),
+            'nonce': base64.b64encode(nonce).decode('utf-8'),
+            'message_number': message_number,
         }
 
         # If this is the first message, include the initial package information
@@ -194,7 +199,7 @@ class User:
         if self.should_perform_dh_ratchet(recipient_id):
             self.should_perform_dh_ratchet(recipient_id)
             # Include new DH public ket if a ratchet step was performed
-            data['new_dh_public_key'] = self.ratchet_states[recipient_id]['DHs_public'].hex()
+            data['new_dh_public_key'] = self.ratchet_states[recipient_id]['DHs_public']
 
         response = requests.post(f'{self.server_url}/send_message', json=data)
         if response.status_code == 200:
@@ -207,29 +212,42 @@ class User:
             print(f"No ratchet state for {sender_id}. Unable to decrypt message.")
             return
 
+        their_dh_public = self.ratchet_states[sender_id]['DHr']
+
+        # Extract message_number from the message data
+        message_number = data.get('message_number')
+        if message_number is None:
+            print("Message number is missing in the received data.")
+            return
+        message_number = int(message_number)
+
+        ciphertext = base64.b64decode(data['encrypted_message'])
+        nonce = base64.b64decode(data['nonce'])
+
         if 'new_dh_public_key' in data:
             # A new DH public ket indicates that the sender has performed a DH ratcher step
             new_dh_public_key = int(data['new_dh_public_key'], 16)
             self.perform_dh_ratchet_step(sender_id, new_dh_public_key)
 
-        encrypted_message = bytes.fromhex(data['encrypted_message'])
-        nonce = bytes.fromhex(data['nonce'])
-
         # Decrypt the message using the current receiving chain key
-        decrypted_message = self.decrypt_with_chain_key(sender_id, encrypted_message, nonce)
-        if decrypted_message is not None:
-            print(f"Received decrypted message from {sender_id}: {decrypted_message}")
-            # Successfully decrypted, update receiving chain key
-            self.update_receiving_chain_key(sender_id)
-        else:
-            # Handle decryption failure (possibly due to out-of order message)
-            print("Failed to decrypt message, attempting to use skipped message keys")
-            # Attempt to decrypt using skipped message keys if any
-            decrypted_message = self.decrypt_skipped_message(sender_id, data)
-            if decrypted_message:
-                print(f"Received decrypted message {sender_id} using skipped key: {decrypted_message}")
+        try:
+            # Attempt to decrypt with current chain key
+            decrypted_message = self.decrypt_with_chain_key(sender_id, their_dh_public, message_number,  ciphertext, nonce)
+            if decrypted_message is not None:
+                print(f"Received decrypted message from {sender_id}: {decrypted_message}")
+                # Successfully decrypted, update receiving chain key
+                self.update_receiving_chain_key(sender_id)
             else:
-                print("Failed to decrypt message using skipped keys")
+                # Handle decryption failure (possibly due to out-of order message)
+                print("Failed to decrypt message, attempting to use skipped message keys")
+                # Attempt to decrypt using skipped message keys if any
+                decrypted_message = self.decrypt_skipped_message(sender_id, their_dh_public, message_number, ciphertext, nonce)
+                if decrypted_message:
+                    print(f"Received decrypted message {sender_id} using skipped key: {decrypted_message}")
+                else:
+                    print("Failed to decrypt message using skipped keys")
+        except Exception as e:
+            print(f"Error while decrypting message from {sender_id}: {str(e)}")
 
     def update_receiving_chain_key(self, sender_id):
         # Update the receiving chain key (CKr) using KDF and increment Nr
@@ -317,6 +335,7 @@ class User:
 
         self.ratchet_states[recipient_id] = {
             'DHr': their_dh_public,  # Their current DH public key
+            'DHs': our_dh_public,  # Our current DH public key for sending
             'RK': rk,  # Root key to be derived
             'CKs': cks,  # Sending chain key
             'CKr': ckr,  # Receiving chain key
@@ -325,10 +344,8 @@ class User:
             'PN': 0,  # Previous number of message in sending chain
             'MKSKIPPED': {}  # Dictionary for skipped message keys
         }
-
-        # Store our DH public key for sending to recipient
-
-        self.ratchet_states[recipient_id]['DHs_public'] = our_dh_public
+        # Log the initial ratchet state for debugging
+        print(f"Ratchet state initialized for {recipient_id}: {self.ratchet_states[recipient_id]}")
 
     def perform_dh_ratchet_step(self, recipient_id, their_dh_public):
         # Generate new DH key pair
@@ -361,7 +378,10 @@ class User:
             return True
         return False
 
-    def handle_skipped_messages(self, sender_id, message_number, their_dh_public, message_key):
+    def handle_skipped_messages(self, sender_id, their_dh_public, message_number, message_key):
+
+        if sender_id not in self.ratchet_states:
+            self.ratchet_states[sender_id] = {'MKSKIPPED': {}}
         # Check if message keys for skipped messages have been stored
         if (their_dh_public, message_number) in self.ratchet_states[sender_id]['MKSKIPPED']:
             raise ValueError("Message key for this DH public key and message number already exists.")
@@ -370,11 +390,18 @@ class User:
         self.ratchet_states[sender_id]['MKSKIPPED'][(their_dh_public, message_number)] = message_key
 
     def decrypt_skipped_message(self, sender_id, their_dh_public, message_number, ciphertext, nonce):
-        # Retrieve the message key from MKSKIPPED if available
-        message_key = self.ratchet_states[sender_id]['MKSKIPPED'].pop((their_dh_public, message_number), None)
+        # Check for existence of skipped messages for this sender
+        if sender_id not in self.ratchet_states or 'MKSKIPPED' not in self.ratchet_states[sender_id]:
+            print(f"No skipped messages for {sender_id}")
+            return None
+
+        # Retrieve the message key from MKSKIPPED if available using a composite key
+        composite_key = (their_dh_public, message_number)
+        message_key = self.ratchet_states[sender_id]['MKSKIPPED'].pop(composite_key, None)
 
         if message_key is None:
-            raise ValueError("Message key for skipped message not found.")
+            print(f"Message key for skipped message not found {message_number} from {sender_id}")
+            return None
 
         # Decrypt the message using the retrieved message key
         aesgcm = AESGCM(message_key)
@@ -385,18 +412,32 @@ class User:
             print(f"Decryption of skipped message failed: {e}")
             return None
 
-    def decrypt_with_chain_key(self, sender_id, ciphertext, nonce):
+    def decrypt_with_chain_key(self, sender_id, their_dh_public, message_number, ciphertext, nonce):
         if sender_id not in self.ratchet_states:
             raise ValueError(f"No ratchet state for sender {sender_id}")
 
+        if 'CKr' not in self.ratchet_states[sender_id] or 'Nr' not in self.ratchet_states[sender_id]:
+            print(f"Receiving chain key or message number not initialized for {sender_id}.")
+            return None
+
+        current_message_number = self.ratchet_states[sender_id]['Nr']
+
+        if message_number != current_message_number:
+            print(
+                f"Message number {message_number} does not match expected number {current_message_number}. Attempting to decrypt with skipped key.")
+            return self.decrypt_skipped_message(sender_id, their_dh_public, message_number, ciphertext, nonce)
+
+        # Use the current receiving chain key for decryption
         chain_key = self.ratchet_states[sender_id]['CKr']
         message_key, new_chain_key = self.derive_message_key(chain_key)
 
         aesgcm = AESGCM(message_key)
         try:
             plaintext = aesgcm.decrypt(nonce, ciphertext, None)
-            self.ratchet_states[sender_id]['CKr'] = new_chain_key  # Update receiving chain key
-            self.ratchet_states[sender_id]['Nr'] += 1  # Increment the receiving message counter
+            # Successfully decrypted with the current receiving chain key
+            # Update receiving chain key and increment message counter
+            self.ratchet_states[sender_id]['CKr'] = new_chain_key
+            self.ratchet_states[sender_id]['Nr'] += 1
             return plaintext.decode()
         except cryptography.exceptions.InvalidKey as e:
             print(f"Decryption failed due to an Invalid tag: {str(e)}")
@@ -417,10 +458,13 @@ class User:
         nonce = os.urandom(12)
         ciphertext = aesgcm.encrypt(nonce, plaintext.encode(), None)
 
+        # Fetch the current message number before incrementing
+        message_number = self.ratchet_states[recipient_id]['Ns']
+
         self.ratchet_states[recipient_id]['CKs'] = new_chain_key  # Update chain key
         self.ratchet_states[recipient_id]['Ns'] += 1  # Increment message count
 
-        return ciphertext, nonce
+        return ciphertext, nonce, message_number
 
     def derive_new_rk_and_chain_keys(self, shared_secret, old_root_key):
         # Use HKDF to derive 96 bytes of key material from the shared secret and old root key.

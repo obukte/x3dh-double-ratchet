@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # coding: utf-8
+import base64
 
 from flask import Flask, request, jsonify
 from dh_utils import DiffieHellmanUtils
@@ -19,24 +20,33 @@ dh_parameters['prime'], dh_parameters['generator'] = prime, generator
 def register_user():
     data = request.json
     user_id = data.get('user_id')
-    identity_key = int(data['public_key']['identity_key'])
-    signed_prekey = int(data['public_key']['signed_prekey'])
-    one_time_prekeys = [int(pk) for pk in data['public_key']['one_time_prekeys']]  # Expecting a list of one-time prekeys
-
-    if not user_id or not identity_key or not signed_prekey or not one_time_prekeys:
-        return jsonify({'error': 'All key material is required'}), 400
 
     if user_id in users:
         return jsonify({'error': 'User ID already registered'}), 409
 
-    # Store the user's X3DH key material
-    users[user_id] = {
-        'identity_key': identity_key,
-        'signed_prekey': signed_prekey,
-        'one_time_prekeys': one_time_prekeys,
-    }
+    try:
+        identity_key_bytes = base64.b64decode(data['public_key']['identity_key'])
+        signed_prekey_bytes = base64.b64decode(data['public_key']['signed_prekey'])
+        one_time_prekeys_bytes_list = [base64.b64decode(pk) for pk in data['public_key']['one_time_prekeys']]  # Expecting a list of one-time prekeys
 
-    return jsonify({'success': True, 'message': f'User {user_id} registered successfully'}), 201
+        if not user_id or not identity_key_bytes or not signed_prekey_bytes or not one_time_prekeys_bytes_list:
+            return jsonify({'error': 'All key material is required'}), 400
+
+        identity_key = int.from_bytes(identity_key_bytes, byteorder='big')
+        signed_prekey = int.from_bytes(signed_prekey_bytes, byteorder='big')
+        one_time_prekeys = [int.from_bytes(pk, byteorder='big') for pk in one_time_prekeys_bytes_list]
+
+        # Store the user's X3DH key material
+        users[user_id] = {
+            'identity_key': identity_key,
+            'signed_prekey': signed_prekey,
+            'one_time_prekeys': one_time_prekeys,
+        }
+
+        return jsonify({'success': True, 'message': f'User {user_id} registered successfully'}), 201
+
+    except Exception as e:
+        return jsonify({'error': 'Registration failed due to an error'}), 500
 
 @app.route('/get_keys/<user_id>', methods=['GET'])
 def get_keys(user_id):
@@ -99,12 +109,13 @@ def send_message():
     sender_id = data.get('sender_id')
     encrypted_message = data.get('encrypted_message')
     nonce = data.get('nonce')
+    message_number = data.get('message_number')
 
     # This may be included in the first message of a conversation or when a ratchet step occurs
     new_dh_public_key = data.get('new_dh_public_key', None)
     initial_package = data.get('initial_package', None)
 
-    if not sender_id or not recipient_id or not encrypted_message:
+    if not sender_id or not recipient_id or not encrypted_message or message_number is None:
         return jsonify({'error': 'Missing necessary information'}), 400
 
     if recipient_id not in users:
@@ -115,6 +126,7 @@ def send_message():
         'sender_id': sender_id,
         'encrypted_message': encrypted_message,
         'nonce': nonce,
+        'message_number': message_number
     }
 
     if new_dh_public_key:
