@@ -1,5 +1,5 @@
-from user_module.User import user
-from diffiehellman_utils.dh_utils import DiffieHellmanUtils
+from src.User import user
+from server_module import DiffieHellmanUtils
 
 def main():
     # Initialize users Alice and Bob

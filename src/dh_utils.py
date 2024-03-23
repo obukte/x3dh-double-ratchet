@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 # coding: utf-8
-
-
+#
 import os
 import random
 from cryptography.hazmat.primitives import hashes
@@ -94,7 +93,7 @@ class DiffieHellmanUtils:
         key = hkdf.derive(shared_secret)
         return key
 
-    def derive_encryption_keys(shared_secret):
+    def derive_encryption_keys(self, shared_secret):
         # Derive an encryption key
         encryption_key_hkdf = HKDF(
             algorithm=hashes.SHA256(),
@@ -199,22 +198,4 @@ class DiffieHellmanUtils:
 
     def generate_signing_key_pair(self):
         return self.generate_key_pair(self.generator, self.prime)
-
-    def sign_prekey(self, signing_private_key, prekey_public):
-        # Simulate a signature by "encrypting" a hash of the prekey
-        hash_digest = hashes.Hash(hashes.SHA256())
-        hash_digest.update(prekey_public.to_bytes((prekey_public.bit_length() + 7) // 8, byteorder='big'))
-        hashed_prekey = hash_digest.finalize()
-        # Simulate "encryption" with the private key
-        simulated_signature = pow(int.from_bytes(hashed_prekey, byteorder='big'), signing_private_key, self.prime)
-        return simulated_signature.to_bytes((simulated_signature.bit_length() + 7) // 8, byteorder='big')
-
-    def verify_signature(self, signing_public_key, prekey_public, signature):
-        # Simulate signature verification
-        hash_digest = hashes.Hash(hashes.SHA256())
-        hash_digest.update(prekey_public.to_bytes((prekey_public.bit_length() + 7) // 8, byteorder='big'))
-        hashed_prekey = hash_digest.finalize()
-        # Simulate "decryption" with the public key
-        decrypted_hash = pow(int.from_bytes(signature, byteorder='big'), signing_public_key, self.prime)
-        return decrypted_hash.to_bytes((decrypted_hash.bit_length() + 7) // 8, byteorder='big') == hashed_prekey
 

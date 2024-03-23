@@ -1,5 +1,5 @@
-from user_module.User import user
-from diffiehellman_utils import DiffieHellmanUtils
+from src.User import user
+from server_module import DiffieHellmanUtils
 
 def main():
     server_url = "http://127.0.0.1:5020"

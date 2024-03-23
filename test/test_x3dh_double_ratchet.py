@@ -1,21 +1,11 @@
-from server_module import relay_server
-from diffiehellman_utils import dh_utils
-from user_module import User
-import threading
+from src.User import User
+from src.dh_utils import DiffieHellmanUtils
 import time
 
 
 # Mock server run
-def run_mock_server():
-    relay_server.run(port=5020)
 
-
-# Start the mock server in a separate thread
-server_thread = threading.Thread(target=run_mock_server, daemon=True)
-server_thread.start()
-
-# Give the server a moment to start up
-time.sleep(1)
+dh_utils = DiffieHellmanUtils()
 
 # Initialize two users
 alice = User("Alice", "http://127.0.0.1:5020", dh_utils, max_one_time_prekeys=5)

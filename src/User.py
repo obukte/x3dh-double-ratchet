@@ -7,7 +7,7 @@ import cryptography.exceptions
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes, padding
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from diffiehellman_utils.dh_utils import DiffieHellmanUtils
+from .dh_utils import DiffieHellmanUtils
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from datetime import time
 
@@ -97,31 +97,23 @@ class User:
         except KeyboardInterrupt:
             print("Stopped polling for messages.")
 
-    def sign_prekey(self, private_key, prekey_public_bytes):
-        signature = private_key.sign(
-            prekey_public_bytes,
-            padding.PSS(
-                mgf=padding.MGF1(hashes.SHA256()),
-                salt_length=padding.PSS.MAX_LENGTH
-            ),
-            hashes.SHA256()
-        )
-        return signature
+    def sign_prekey(self, signing_private_key, prekey_public):
+        # Simulate a signature by "encrypting" a hash of the prekey
+        hash_digest = hashes.Hash(hashes.SHA256())
+        hash_digest.update(prekey_public.to_bytes((prekey_public.bit_length() + 7) // 8, byteorder='big'))
+        hashed_prekey = hash_digest.finalize()
+        # Simulate "encryption" with the private key
+        simulated_signature = pow(int.from_bytes(hashed_prekey, byteorder='big'), signing_private_key, self.prime)
+        return simulated_signature.to_bytes((simulated_signature.bit_length() + 7) // 8, byteorder='big')
 
-    def verify_signature(self, public_key, prekey_public_bytes, signature):
-        try:
-            public_key.verify(
-                signature,
-                prekey_public_bytes,
-                padding.PSS(
-                    mgf=padding.MGF1(hashes.SHA256()),
-                    salt_length=padding.PSS.MAX_LENGTH
-                ),
-                hashes.SHA256()
-            )
-            return True
-        except Exception as e:
-            return False
+    def verify_signature(self, signing_public_key, prekey_public, signature):
+        # Simulate signature verification
+        hash_digest = hashes.Hash(hashes.SHA256())
+        hash_digest.update(prekey_public.to_bytes((prekey_public.bit_length() + 7) // 8, byteorder='big'))
+        hashed_prekey = hash_digest.finalize()
+        # Simulate "decryption" with the public key
+        decrypted_hash = pow(int.from_bytes(signature, byteorder='big'), signing_public_key, self.prime)
+        return decrypted_hash.to_bytes((decrypted_hash.bit_length() + 7) // 8, byteorder='big') == hashed_prekey
 
     def register(self):
         url = f'{self.server_url}/register'
@@ -161,7 +153,7 @@ class User:
     def send_message(self, recipient_id, message):
         recipient_keys = self.fetch_public_keys(recipient_id)
         initial_package = None
-        if recipient_keys in None:
+        if recipient_keys is None:
             print("Failed to fetch recipient's keys.")
             return
 
@@ -175,9 +167,13 @@ class User:
             self.initiate_double_ratchet(recipient_id, shared_secret, ephemeral_public_key,
                                          recipient_keys['identity_key'])
 
+            # Convert ephemeral_public_key to bytes then to a hex string
+            ephemeral_key_hex = ephemeral_public_key.to_bytes((ephemeral_public_key.bit_length() + 7) // 8, byteorder='big').hex()
+            chosen_prekey_hex = chosen_prekey.to_bytes((chosen_prekey.bit_length() + 7) // 8, byteorder='big').hex()
+
             initial_package = {
-                'ephemeral_key': ephemeral_public_key.hex(),
-                'chosen_prekey': chosen_prekey.hex(),
+                'ephemeral_key': ephemeral_key_hex,
+                'chosen_prekey': chosen_prekey_hex,
             }
 
         # Encrypt the message with the current sending chain key
@@ -273,7 +269,15 @@ class User:
         # Check if a one-time prekey is provided
         if 'one_time_prekey' in recipient_keys and recipient_keys['one_time_prekey']:
             chosen_prekey = recipient_keys['one_time_prekey']
-            chosen_prekey_public = int(chosen_prekey, 16)
+
+            if isinstance(chosen_prekey, str):
+                chosen_prekey_public = int(chosen_prekey, 16)
+            elif isinstance(chosen_prekey, int):
+                chosen_prekey_public = chosen_prekey
+            else:
+                # Handle the case where chosen_prekey is None or another unexpected type
+                # You will need to decide how to handle this in your application context
+                chosen_prekey_public = None  # or some other default action
             DH4 = self.dh_utils.calculate_shared_secret(self.prime, ephemeral_private_key, chosen_prekey_public)
         else:
             # Handle the case where no one-time prekey is left or provided
@@ -297,26 +301,30 @@ class User:
                 :param our_dh_public: Our current DH public key.
                 :param their_dh_public: Their current DH public key (from the X3DH agreement).
         """
+
+        kdf = HKDF(
+            algorithm=hashes.SHA256(),  # Note the parentheses to instantiate SHA256
+            length=96,  # Adjust length based on your needs
+            salt=None,  # Typically, the salt can be None if not using one
+            info=b'init double ratchet',  # This can be application specific information
+            backend=default_backend()
+        )
+
+        key_material = kdf.derive(shared_secret)
+
+        # Split the derived key material into the root key (RK), and two chain keys (CKs, CKr)
+        rk, cks, ckr = key_material[:32], key_material[32:64], key_material[64:]
+
         self.ratchet_states[recipient_id] = {
             'DHr': their_dh_public,  # Their current DH public key
-            'RK': None,  # Root key to be derived
-            'CKs': None,  # Sending chain key
-            'CKr': None,  # Receiving chain key
+            'RK': rk,  # Root key to be derived
+            'CKs': cks,  # Sending chain key
+            'CKr': ckr,  # Receiving chain key
             'Ns': 0,  # Message number for sending
             'Nr': 0,  # Message number for receiving
             'PN': 0,  # Previous number of message in sending chain
             'MKSKIPPED': {}  # Dictionary for skipped message keys
         }
-
-        # Derive the first root key (RK) and the first pair of chain keys (CKs, CKr) using HKDF
-        kdf = HKDF(algorithm=hashes.SHA256, length=96, salt=None, info=b'init double ratchet',
-                   backend=default_backend())
-        rk, cks, ckr = kdf.derive(shared_secret)
-
-        # Split the derived data
-        self.ratchet_states[recipient_id]['RK'] = rk[:32]
-        self.ratchet_states[recipient_id]['CKs'] = cks[32:64]
-        self.ratchet_states[recipient_id]['CKr'] = ckr[64:]
 
         # Store our DH public key for sending to recipient
 

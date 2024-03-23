@@ -2,7 +2,7 @@
 # coding: utf-8
 
 from flask import Flask, request, jsonify
-from diffiehellman_utils.dh_utils import DiffieHellmanUtils
+from dh_utils import DiffieHellmanUtils
 
 app = Flask(__name__)
 
@@ -166,4 +166,4 @@ def get_dh_parameters():
     return jsonify(dh_parameters), 200
 
 if __name__ == '__main__':
-    app_instance.run(debug=True, port=5020)
+    app.run(debug=True, port=5020)
