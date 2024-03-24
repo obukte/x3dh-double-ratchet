@@ -78,6 +78,14 @@ class DiffieHellmanUtils:
         return public_key
 
     def calculate_shared_secret(self, prime, other_public_key, private_key, salt=None):
+        # Check if inputs are bytes and convert them to integers if necessary
+        if isinstance(prime, bytes):
+            prime = int.from_bytes(prime, byteorder='big')
+        if isinstance(other_public_key, bytes):
+            other_public_key = int.from_bytes(other_public_key, byteorder='big')
+        if isinstance(private_key, bytes):
+            private_key = int.from_bytes(private_key, byteorder='big')
+
         shared_secret_int = pow(other_public_key, private_key, prime)
         shared_secret = shared_secret_int.to_bytes((shared_secret_int.bit_length() + 7) // 8, byteorder='big')
         derived_key = self.derive_key(shared_secret, None, 32)
@@ -161,7 +169,7 @@ class DiffieHellmanUtils:
         return key_id, private_key, public_key
 
     def combine_secrets(self, *secrets):
-        combined = b''.join([secret[0] for secret in secrets if isinstance(secret, tuple) and len(secret) > 0])
+        combined = b''.join(secrets)
 
         hkdf = HKDF(
             algorithm=hashes.SHA256(),

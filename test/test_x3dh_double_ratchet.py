@@ -28,6 +28,16 @@ bob.send_message("Alice", "Hello Alice, I received your message!")
 
 time.sleep(1)
 
+# Simulate Bob sending a reply to Alice
+bob.send_message("Alice", "Hello Alice, new message!")
+
+time.sleep(1)
+
+# Simulate Bob sending a reply to Alice
+bob.send_message("Alice", "Hello Alice, new message  2!")
+
+time.sleep(1)
+
 # Simulate fetching messages for Alice from the server
 alice.fetch_messages()
 
