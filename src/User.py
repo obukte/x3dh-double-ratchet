@@ -70,6 +70,7 @@ class User:
                 print("Server indicates that rekeying is needed. Generating and uploading new one-time prekeys.")
                 self.generate_and_upload_new_prekeys()
 
+            print(f"Fetched public keys for {user_id}: {public_keys}")
             return {
                 'identity_key': public_keys['identity_key'],
                 'signed_prekey': public_keys['signed_prekey'],
@@ -200,6 +201,7 @@ class User:
             # Include new DH public ket if a ratchet step was performed
             data['new_dh_public_key'] = self.ratchet_states[recipient_id]['DHs']
 
+        print(f"Sending message to {recipient_id}. Message number: {message_number}")
         response = requests.post(f'{self.server_url}/send_message', json=data)
         if response.status_code == 200:
             print("Message sent successfully.")
@@ -207,6 +209,7 @@ class User:
             print(f"Failed to send message: {response.json()}")
 
     def receive_message(self, sender_id, data):
+        print(f"Attempting to decrypt message at: {self.name }from {sender_id}")
         if sender_id not in self.ratchet_states:
             print(f"No ratchet state for {sender_id}. Unable to decrypt message.")
             return
@@ -225,6 +228,7 @@ class User:
 
         # Check for initial package to set up ratchet state for first-time communication
         if 'initial_package' in data:
+            print(f"Setting up initial ratchet state for {sender_id} with initial package")
             self.setup_initial_ratchet_state(sender_id, data['initial_package'])
 
         if not ciphertext or not nonce or message_number is None:
@@ -241,6 +245,7 @@ class User:
 
         if 'new_dh_public_key' in data:
             # A new DH public ket indicates that the sender has performed a DH ratcher step
+            print(f"New DH public key received from {sender_id}. Performing DH ratchet step.")
             new_dh_public_key = data['new_dh_public_key']
             self.perform_dh_ratchet_step(sender_id, new_dh_public_key)
 
@@ -314,13 +319,19 @@ class User:
         return message_key, new_chain_key
 
     def perform_x3dh_key_agreement(self, recipient_id, recipient_keys):
+
         chosen_prekey = None
         ephemeral_private_key, ephemeral_public_key = self.dh_utils.generate_key_pair(self.generator, self.prime)
 
+        print(f"Performing X3DH key agreement with {recipient_id}. Our ephemeral key: {ephemeral_public_key}, their signed prekey: {recipient_keys['signed_prekey']}")
+
         DH1 = self.dh_utils.calculate_shared_secret(self.prime, self.identity_private, recipient_keys['signed_prekey'])
+        print(f"DH1 result with user: {self.name} recipient: {recipient_id}'s signed prekey: {DH1.hex()}")
         DH2 = self.dh_utils.calculate_shared_secret(self.prime, self.signed_prekey_private,
                                                     recipient_keys['identity_key'])
+        print(f"DH2 result with user: {self.name} recipient: {recipient_id}'s identity key: {DH2.hex()}")
         DH3 = self.dh_utils.calculate_shared_secret(self.prime, ephemeral_private_key, recipient_keys['signed_prekey'])
+        print(f"DH3 result with user: {self.name} ephemeral private and recipient: {recipient_id}'s signed prekey: {DH3.hex()}")
 
         # Optional DH4
         DH4 = None
@@ -329,13 +340,16 @@ class User:
             chosen_prekey = recipient_keys['one_time_prekey']
             chosen_prekey_public = int(chosen_prekey, 16) if isinstance(chosen_prekey, str) else chosen_prekey
             DH4 = self.dh_utils.calculate_shared_secret(self.prime, ephemeral_private_key, chosen_prekey_public)
+            print(f"DH4 result with user: {self.name} ephemeral private and recipient: {recipient_id}'s one-time prekey: {DH4.hex()}")
         else:
+            print("No one-time prekey used for X3DH with", recipient_id)
             # Handle the case where no one-time prekey is left or provided
             print("Warning: No one-time prekey available. This might affect forward secrecy.")
 
         # Combine the DH secrets to derive the shared secret
         shared_secret_components = [DH1, DH2, DH3] + ([DH4] if DH4 else [])
         shared_secret = self.dh_utils.combine_secrets(*shared_secret_components)
+        print(f"Combined shared secret for {recipient_id}: {shared_secret}")
 
         # Verify shared_secret is in bytes format after combination
         if not isinstance(shared_secret, bytes):
@@ -350,14 +364,8 @@ class User:
         return shared_secret, ephemeral_public_key, chosen_prekey if chosen_prekey else None
 
     def initiate_double_ratchet(self, recipient_id, shared_secret, our_dh_public, their_dh_public):
-        """
-                Initiates the double ratchet mechanism by setting the initial ratchet keys and states.
-
-                :param recipient_id: ID of the recipient user.
-                :param shared_secret: The shared secret derived from the X3DH key agreement.
-                :param our_dh_public: Our current DH public key.
-                :param their_dh_public: Their current DH public key (from the X3DH agreement).
-        """
+        print(
+            f"Initializing Double Ratchet for {recipient_id} with our DH public key {our_dh_public} and their DH public key {their_dh_public}")
 
         # Ensure shared_secret is bytes-like
         if not isinstance(shared_secret, bytes):
@@ -382,6 +390,7 @@ class User:
 
         # Split the derived key material into the root key (RK), and two chain keys (CKs, CKr)
         rk, cks, ckr = key_material[:32], key_material[32:64], key_material[64:]
+        print(f"Derived keys for {recipient_id} - RK: {rk.hex()}, CKs: {cks.hex()}, CKr: {ckr.hex()}")
 
         self.ratchet_states[recipient_id] = {
             'DHr': their_dh_public,  # Their current DH public key
@@ -398,6 +407,9 @@ class User:
         print(f"Ratchet state initialized for {recipient_id}: {self.ratchet_states[recipient_id]}")
 
     def perform_dh_ratchet_step(self, recipient_id, their_dh_public):
+
+        print(f"Performing ratchet step with {recipient_id}. their_dh_public: {their_dh_public}")
+
         # Generate new DH key pair
         our_new_dh_private, our_new_dh_public = self.dh_utils.generate_key_pair(self.generator, self.prime)
 
