@@ -8,13 +8,15 @@ import requests
 import cryptography.exceptions
 import base64
 from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives import hashes, padding
+from cryptography.hazmat.primitives import hashes, padding, serialization
+from cryptography.hazmat.primitives.asymmetric import rsa, padding
+from cryptography.hazmat.primitives.asymmetric import padding as asym_padding
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from .dh_utils import DiffieHellmanUtils
+from .rsa_utils import RSAUtils
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from datetime import time
 
-dh_utils = DiffieHellmanUtils()
 name = "User1"
 server_url = "http://127.0.0.1:5020"
 DH_RATCHET_UPDATE_THRESHOLD = 2
@@ -22,9 +24,10 @@ DH_RATCHET_UPDATE_THRESHOLD = 2
 
 class User:
 
-    def __init__(self, name, server_url, dh_utils, max_one_time_prekeys=5):
+    def __init__(self, name, server_url, max_one_time_prekeys=5):
         self.name = name
-        self.dh_utils = dh_utils
+        self.dh_utils = DiffieHellmanUtils()
+        self.rsa_utils = RSAUtils()
         self.server_url = server_url
         self.max_one_time_prekeys = max_one_time_prekeys
         self.shared_secrets = {}
@@ -38,11 +41,15 @@ class User:
     def initialize_keys(self):
         self.prime, self.generator = self.fetch_dh_parameters()
         self.identity_private, self.identity_public = self.dh_utils.generate_key_pair(self.generator, self.prime)
-        self.signed_prekey_private, self.signed_prekey_public = self.dh_utils.generate_key_pair(self.generator,
-                                                                                                self.prime)
+
+        rsa_keys = self.rsa_utils.generate_rsa_keys(key_size=512)  # Customize key_size as needed
+        self.signed_prekey_public = rsa_keys['public_key']
+        self.signed_prekey_private = rsa_keys['private_key']
+
+        self.signed_prekey_signature = self.sign_data(data, self.signed_prekey_private)
+
         self.one_time_prekeys = [self.dh_utils.generate_one_time_preKey(self.generator, self.prime) for _ in
                                  range(self.max_one_time_prekeys)]
-        self.signed_prekey_signature = self.sign_prekey(self.identity_private, self.signed_prekey_public)
 
         self.key_bundle = {
             'identity_key': self.identity_public,
@@ -51,10 +58,21 @@ class User:
             'one_time_prekeys': [public_key for _, _, public_key in self.one_time_prekeys]  # List of one-time prekeys
         }
 
+    def sign_data(self, data, private_key):
+        # Assuming `data` is a string that needs to be signed
+        signature = self.rsa_utils.sign(data, private_key)
+        return signature
+
+    def verify_signature(self, data, signature):
+        # This uses the public key part of the user's RSA keys
+        is_valid = self.rsa_utils.verify(data, signature, self.public_key)
+        return is_valid
+
     def fetch_dh_parameters(self):
         response = requests.get(f'{self.server_url}/dh_parameters')
         if response.status_code == 200:
             dh_params = response.json()
+            print(f"{self.name} fetched dh parameters from server: prime: {dh_params['prime']} generator: {dh_params['generator']} ")
             return dh_params['prime'], dh_params['generator']
         else:
             raise Exception("Failed to fetch DH parameters from the server.")
@@ -67,10 +85,10 @@ class User:
 
             # Check if the server indicates that rekeying is needed
             if public_keys.get('rekey_needed', False):
-                print("Server indicates that rekeying is needed. Generating and uploading new one-time prekeys.")
+                print(f"Server indicates to {self.name} that rekeying is needed. Generating and uploading new one-time prekeys.")
                 self.generate_and_upload_new_prekeys()
 
-            print(f"Fetched public keys for {user_id}: {public_keys}")
+            print(f"User {self.name} fetched public keys for {user_id}: {public_keys}")
             return {
                 'identity_key': public_keys['identity_key'],
                 'signed_prekey': public_keys['signed_prekey'],
@@ -101,11 +119,6 @@ class User:
                 time.sleep(interval)
         except KeyboardInterrupt:
             print("Stopped polling for messages.")
-
-    def sign_prekey(self, signing_private_key, prekey_public):
-
-        signature = (signing_private_key + prekey_public) % self.prime
-        return signature
 
     def verify_signature(self, signing_public_key, prekey_public, signature):
         is_valid = (prekey_public - signature) % self.prime == 0
@@ -147,7 +160,7 @@ class User:
         data = {
             'user_id': self.name,
             'public_key': {
-                'one_time_prekeys': [str(public_key) for public_key in one_time_prekeys_public]
+                'one_time_prekeys': one_time_prekeys_public
             }
         }
 
@@ -211,8 +224,8 @@ class User:
     def receive_message(self, sender_id, data):
         print(f"Attempting to decrypt message at: {self.name }from {sender_id}")
         if sender_id not in self.ratchet_states:
-            print(f"No ratchet state for {sender_id}. Unable to decrypt message.")
-            return
+            print(f"{self.name} has no ratchet state for {sender_id}. Starting setup_initial_ratchet_state().")
+            self.setup_initial_ratchet_state(sender_id, data['initial_package'])
 
         their_dh_public = self.ratchet_states[sender_id]['DHr']
         # get ciphertext from data
@@ -275,6 +288,7 @@ class User:
                 print("Failed to decrypt message using skipped keys")
 
     def setup_initial_ratchet_state(self, sender_id, initial_package):
+        print(f"setup_initial_ratchet_state is kicked at {self.name} for the {sender_id}.")
         # Extract the ephemeral key and chosen prekey from the initial package
         ephemeral_public_b64 = initial_package.get('ephemeral_key')
         chosen_prekey_b64 = initial_package.get('chosen_prekey')
@@ -284,14 +298,25 @@ class User:
                                           'big') if ephemeral_public_b64 else None
         chosen_prekey = int.from_bytes(base64.b64decode(chosen_prekey_b64), 'big') if chosen_prekey_b64 else None
 
-        recipient_keys = self.fetch_public_keys(sender_id)
+        # Fetch sender's public keys again, if not available. This is just for safety, in practice, this should already be available
+        if sender_id not in self.shared_secrets:
+            recipient_keys = self.fetch_public_keys(sender_id)
+            if not recipient_keys:
+                print(f"Unable to fetch public keys for {sender_id}. Cannot initialize double ratchet.")
+                return
+        else:
+            recipient_keys = {
+                'identity_key': self.shared_secrets[sender_id]['identity_key'],
+                'signed_prekey': self.shared_secrets[sender_id]['signed_prekey'],
+                # The 'one_time_prekey' might not be directly stored in 'shared_secrets', adjust as needed
+            }
 
-        if not recipient_keys:
-            print(f"Failed to fetch public keys for {sender_id}. Cannot perform X3DH key agreement.")
-            return
-
-            # Perform X3DH key agreement using fetched recipient keys and keys from initial_package
-        shared_secret, _, _ = self.perform_x3dh_key_agreement(sender_id,recipient_keys)
+        # Perform X3DH key agreement using the ephemeral key and the prekeys
+        shared_secret, _, _ = self.perform_x3dh_key_agreement(sender_id, {
+            'identity_key': recipient_keys['identity_key'],
+            'signed_prekey': recipient_keys['signed_prekey'],
+            'one_time_prekey': chosen_prekey
+        }, ephemeral_public)
 
     def update_receiving_chain_key(self, sender_id):
         # Update the receiving chain key (CKr) using KDF and increment Nr
@@ -323,15 +348,15 @@ class User:
         chosen_prekey = None
         ephemeral_private_key, ephemeral_public_key = self.dh_utils.generate_key_pair(self.generator, self.prime)
 
-        print(f"Performing X3DH key agreement with {recipient_id}. Our ephemeral key: {ephemeral_public_key}, their signed prekey: {recipient_keys['signed_prekey']}")
+        print(f"{self.name} is performing X3DH key agreement with {recipient_id}. {self.name}'s new 'ephemeral_public_key': {ephemeral_public_key}, 'identity_private':{self.identity_private}, 'signed_prekey_private': {self.signed_prekey_private} )")
 
         DH1 = self.dh_utils.calculate_shared_secret(self.prime, self.identity_private, recipient_keys['signed_prekey'])
-        print(f"DH1 result with user: {self.name} recipient: {recipient_id}'s signed prekey: {DH1.hex()}")
-        DH2 = self.dh_utils.calculate_shared_secret(self.prime, self.signed_prekey_private,
-                                                    recipient_keys['identity_key'])
-        print(f"DH2 result with user: {self.name} recipient: {recipient_id}'s identity key: {DH2.hex()}")
+        DH2 = self.dh_utils.calculate_shared_secret(self.prime, self.signed_prekey_private,recipient_keys['identity_key'])
         DH3 = self.dh_utils.calculate_shared_secret(self.prime, ephemeral_private_key, recipient_keys['signed_prekey'])
-        print(f"DH3 result with user: {self.name} ephemeral private and recipient: {recipient_id}'s signed prekey: {DH3.hex()}")
+
+        print(f"\t-DH1-{self.name}'s identity_private: {self.identity_private} with {recipient_id}'s signed_prekey: {recipient_keys['signed_prekey']}: {DH1.hex()}")
+        print(f"\t-DH2-{self.name}'s signed_prekey_private:{self.signed_prekey_private} with {recipient_id}'s identity_key: {recipient_keys['identity_key']}: {DH2.hex()}")
+        print(f"\t-DH3-{self.name}'s ephemeral_private_key: {ephemeral_private_key} with {recipient_id}'s signed_prekey: {recipient_keys['signed_prekey']}: {DH3.hex()}")
 
         # Optional DH4
         DH4 = None
@@ -340,16 +365,17 @@ class User:
             chosen_prekey = recipient_keys['one_time_prekey']
             chosen_prekey_public = int(chosen_prekey, 16) if isinstance(chosen_prekey, str) else chosen_prekey
             DH4 = self.dh_utils.calculate_shared_secret(self.prime, ephemeral_private_key, chosen_prekey_public)
-            print(f"DH4 result with user: {self.name} ephemeral private and recipient: {recipient_id}'s one-time prekey: {DH4.hex()}")
+            print(f"\t-DH4-{self.name}'s ephemeral_private_key and {recipient_id}'s chosen_prekey_public: {DH4.hex()}")
         else:
-            print("No one-time prekey used for X3DH with", recipient_id)
+            print(f"{self.name} did not used one-time prekey used for X3DH with: ", recipient_id)
+            # maybe
             # Handle the case where no one-time prekey is left or provided
-            print("Warning: No one-time prekey available. This might affect forward secrecy.")
+            # print("Warning: No one-time prekey available. This might affect forward secrecy.")
 
         # Combine the DH secrets to derive the shared secret
         shared_secret_components = [DH1, DH2, DH3] + ([DH4] if DH4 else [])
         shared_secret = self.dh_utils.combine_secrets(*shared_secret_components)
-        print(f"Combined shared secret for {recipient_id}: {shared_secret}")
+        print(f"{self.name} combined shared secret for {recipient_id}, secret_shared: {shared_secret.hex()}")
 
         # Verify shared_secret is in bytes format after combination
         if not isinstance(shared_secret, bytes):
@@ -358,14 +384,13 @@ class User:
             shared_secret = b''
 
         self.shared_secrets[recipient_id] = shared_secret
-        print(f":perform_x3dh_key_agreement: Shared secret : {shared_secret}")
         self.initiate_double_ratchet(recipient_id, shared_secret, ephemeral_public_key, recipient_keys['identity_key'])
 
         return shared_secret, ephemeral_public_key, chosen_prekey if chosen_prekey else None
 
     def initiate_double_ratchet(self, recipient_id, shared_secret, our_dh_public, their_dh_public):
         print(
-            f"Initializing Double Ratchet for {recipient_id} with our DH public key {our_dh_public} and their DH public key {their_dh_public}")
+            f"{self.name} is Initializing Double Ratchet for {recipient_id} with our DH public key {our_dh_public} and their DH public key {their_dh_public}")
 
         # Ensure shared_secret is bytes-like
         if not isinstance(shared_secret, bytes):
@@ -547,3 +572,13 @@ class User:
         new_receiving_chain_key = key_material[64:96]
 
         return new_root_key, new_sending_chain_key, new_receiving_chain_key
+
+    def sign_data(self, data):
+        # Assuming `data` is a string that needs to be signed
+        signature = self.rsa_utils.sign(data, self.private_key)
+        return signature
+
+    def verify_signature(self, data, signature):
+        # This uses the public key part of the user's RSA keys
+        is_valid = self.rsa_utils.verify(data, signature, self.public_key)
+        return is_valid
