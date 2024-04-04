@@ -9,11 +9,8 @@ import cryptography.exceptions
 import base64
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes, padding, serialization
-from cryptography.hazmat.primitives.asymmetric import rsa, padding
-from cryptography.hazmat.primitives.asymmetric import padding as asym_padding
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from .dh_utils import DiffieHellmanUtils
-from .rsa_utils import RSAUtils
+from src.DiffieHellmanUtils import DiffieHellmanUtils
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from datetime import time
 
@@ -27,7 +24,6 @@ class User:
     def __init__(self, name, server_url, max_one_time_prekeys=5):
         self.name = name
         self.dh_utils = DiffieHellmanUtils()
-        self.rsa_utils = RSAUtils()
         self.server_url = server_url
         self.max_one_time_prekeys = max_one_time_prekeys
         self.shared_secrets = {}
@@ -41,32 +37,16 @@ class User:
     def initialize_keys(self):
         self.prime, self.generator = self.fetch_dh_parameters()
         self.identity_private, self.identity_public = self.dh_utils.generate_key_pair(self.generator, self.prime)
-
-        rsa_keys = self.rsa_utils.generate_rsa_keys(key_size=512)  # Customize key_size as needed
-        self.signed_prekey_public = rsa_keys['public_key']
-        self.signed_prekey_private = rsa_keys['private_key']
-
-        self.signed_prekey_signature = self.sign_data(data, self.signed_prekey_private)
+        self.prekey_public, self.prekey_private = self.dh_utils.generate_key_pair(self.generator, self.prime)
 
         self.one_time_prekeys = [self.dh_utils.generate_one_time_preKey(self.generator, self.prime) for _ in
                                  range(self.max_one_time_prekeys)]
 
         self.key_bundle = {
             'identity_key': self.identity_public,
-            'signed_prekey': self.signed_prekey_public,
-            'signed_prekey_signature': self.signed_prekey_signature,
+            'signed_prekey': self.prekey_public,
             'one_time_prekeys': [public_key for _, _, public_key in self.one_time_prekeys]  # List of one-time prekeys
         }
-
-    def sign_data(self, data, private_key):
-        # Assuming `data` is a string that needs to be signed
-        signature = self.rsa_utils.sign(data, private_key)
-        return signature
-
-    def verify_signature(self, data, signature):
-        # This uses the public key part of the user's RSA keys
-        is_valid = self.rsa_utils.verify(data, signature, self.public_key)
-        return is_valid
 
     def fetch_dh_parameters(self):
         response = requests.get(f'{self.server_url}/dh_parameters')
@@ -120,9 +100,6 @@ class User:
         except KeyboardInterrupt:
             print("Stopped polling for messages.")
 
-    def verify_signature(self, signing_public_key, prekey_public, signature):
-        is_valid = (prekey_public - signature) % self.prime == 0
-        return is_valid
 
     def register(self):
         url = f'{self.server_url}/register'
@@ -130,8 +107,7 @@ class User:
             'user_id': self.name,
             'public_key': {
                 'identity_key': base64.b64encode(self.int_to_bytes(self.identity_public)).decode('utf-8'),
-                'signed_prekey': base64.b64encode(self.int_to_bytes(self.signed_prekey_public)).decode('utf-8'),
-                'signed_prekey_signature': base64.b64encode(self.int_to_bytes(self.signed_prekey_signature)).decode('utf-8'),
+                'signed_prekey': base64.b64encode(self.int_to_bytes(self.prekey_public)).decode('utf-8'),
                 'one_time_prekeys': [base64.b64encode(self.int_to_bytes(public_key)).decode('utf-8') for _, _, public_key in self.one_time_prekeys]
             }
         }
@@ -348,14 +324,14 @@ class User:
         chosen_prekey = None
         ephemeral_private_key, ephemeral_public_key = self.dh_utils.generate_key_pair(self.generator, self.prime)
 
-        print(f"{self.name} is performing X3DH key agreement with {recipient_id}. {self.name}'s new 'ephemeral_public_key': {ephemeral_public_key}, 'identity_private':{self.identity_private}, 'signed_prekey_private': {self.signed_prekey_private} )")
+        print(f"{self.name} is performing X3DH key agreement with {recipient_id}. {self.name}'s new 'ephemeral_public_key': {ephemeral_public_key}, 'identity_private':{self.identity_private}, 'signed_prekey_private': {self.prekey_private} )")
 
         DH1 = self.dh_utils.calculate_shared_secret(self.prime, self.identity_private, recipient_keys['signed_prekey'])
-        DH2 = self.dh_utils.calculate_shared_secret(self.prime, self.signed_prekey_private,recipient_keys['identity_key'])
+        DH2 = self.dh_utils.calculate_shared_secret(self.prime, self.prekey_private, recipient_keys['identity_key'])
         DH3 = self.dh_utils.calculate_shared_secret(self.prime, ephemeral_private_key, recipient_keys['signed_prekey'])
 
         print(f"\t-DH1-{self.name}'s identity_private: {self.identity_private} with {recipient_id}'s signed_prekey: {recipient_keys['signed_prekey']}: {DH1.hex()}")
-        print(f"\t-DH2-{self.name}'s signed_prekey_private:{self.signed_prekey_private} with {recipient_id}'s identity_key: {recipient_keys['identity_key']}: {DH2.hex()}")
+        print(f"\t-DH2-{self.name}'s signed_prekey_private:{self.prekey_private} with {recipient_id}'s identity_key: {recipient_keys['identity_key']}: {DH2.hex()}")
         print(f"\t-DH3-{self.name}'s ephemeral_private_key: {ephemeral_private_key} with {recipient_id}'s signed_prekey: {recipient_keys['signed_prekey']}: {DH3.hex()}")
 
         # Optional DH4
@@ -572,13 +548,3 @@ class User:
         new_receiving_chain_key = key_material[64:96]
 
         return new_root_key, new_sending_chain_key, new_receiving_chain_key
-
-    def sign_data(self, data):
-        # Assuming `data` is a string that needs to be signed
-        signature = self.rsa_utils.sign(data, self.private_key)
-        return signature
-
-    def verify_signature(self, data, signature):
-        # This uses the public key part of the user's RSA keys
-        is_valid = self.rsa_utils.verify(data, signature, self.public_key)
-        return is_valid

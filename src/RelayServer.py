@@ -3,7 +3,7 @@
 import base64
 
 from flask import Flask, request, jsonify
-from dh_utils import DiffieHellmanUtils
+from DiffieHellmanUtils import DiffieHellmanUtils
 
 app = Flask(__name__)
 
@@ -75,14 +75,14 @@ def get_keys(user_id):
 
 
 
-@app.route('/request_rekey/<user_id>', methods=['POST'])
-def request_rekey(user_id):
-
-    if user_id not in users:
-        return jsonify({'error': 'User does not exist'}), 404
-
-
-    return jsonify({'success': True, 'message': f'Rekey request sent to {user_id}'}), 200
+# @app.route('/request_rekey/<user_id>', methods=['POST'])
+# def request_rekey(user_id):
+#
+#     if user_id not in users:
+#         return jsonify({'error': 'User does not exist'}), 404
+#
+#
+#     return jsonify({'success': True, 'message': f'Rekey request sent to {user_id}'}), 200
 
 @app.route('/update_prekeys', methods=['POST'])
 def update_prekeys():

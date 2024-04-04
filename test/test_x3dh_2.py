@@ -1,11 +1,11 @@
-from src.User import user
-from server_module import DiffieHellmanUtils
+from src.User import User
+from src.DiffieHellmanUtils import DiffieHellmanUtils
 
 def main():
     # Initialize users Alice and Bob
     dh_utils = DiffieHellmanUtils()
-    alice = user("Alice", "http://127.0.0.1:5020", dh_utils, 5)
-    bob = user("Bob", "http://127.0.0.1:5020", dh_utils, 5)
+    alice = User("Alice", "http://127.0.0.1:5020",  5)
+    bob = User("Bob", "http://127.0.0.1:5020", 5)
 
     # Alice and Bob register themselves with the relay server and publish their keys.
     alice.register()

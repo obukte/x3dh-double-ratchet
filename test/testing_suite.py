@@ -1,4 +1,3 @@
-# Assume dh_utils.py is properly implemented and imported
 import os
 
 import cryptography
