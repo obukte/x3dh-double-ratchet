@@ -15,6 +15,8 @@ dh_parameters = {'prime': None, 'generator': None}
 prime, generator = dh_utils.generate_base_and_prime()
 dh_parameters['prime'], dh_parameters['generator'] = prime, generator
 
+ONE_TIME_KEY_COUNT = 10
+
 
 @app.route('/register', methods=['POST'])
 def register_user():
@@ -52,20 +54,25 @@ def get_keys(user_id):
 
     user_keys = users.get(user_id)
     if user_keys and user_keys['one_time_prekeys']:
-        # Fetch a one-time prekey for the requesting user and remove it from the list
-        one_time_prekey = user_keys['one_time_prekeys'].pop(0)
+        # Determine the number of one-time prekeys to distribute
+        keys_to_send = min(ONE_TIME_KEY_COUNT, len(user_keys['one_time_prekeys']))
+
+        # Fetch the specified number of one-time prekeys for the requesting user
+        one_time_prekeys_to_send = user_keys['one_time_prekeys'][:keys_to_send]
+
+        # Remove the distributed one-time prekeys from the user's store
+        del user_keys['one_time_prekeys'][:keys_to_send]
 
         # Check if one-time prekeys are running low and notify the user to regenerate
-        if len(user_keys['one_time_prekeys']) <= 1:
+        if len(user_keys['one_time_prekeys']) < ONE_TIME_KEY_COUNT:
             print(f"User {user_id}'s one-time prekeys are running low. Notifying user to regenerate.")
-            # This is a simple print statement for demonstration. In a real application, you might want to
-            # send an actual notification to the client, e.g., via WebSocket, push notification, or setting a flag in the response.
+            # Add logic here to notify the user to regenerate one-time prekeys
 
         return jsonify({
             'identity_key': user_keys['identity_key'],
             'signed_prekey': user_keys['signed_prekey'],
-            'one_time_prekey': one_time_prekey,
-            'rekey_needed': len(user_keys['one_time_prekeys']) <= 1  # Indicate if rekeying is needed
+            'one_time_prekey': one_time_prekeys_to_send,
+            'rekey_needed': len(user_keys['one_time_prekeys']) < ONE_TIME_KEY_COUNT  # Indicate if rekeying is needed
         }), 200
     else:
         return jsonify({'error': f'No one-time prekeys left for {user_id}. Please regenerate.'}), 400
@@ -85,7 +92,7 @@ def get_keys(user_id):
 def update_prekeys():
     data = request.json
     user_id = data.get('user_id')
-    new_one_time_prekeys = [int(pk) for pk in data.get('one_time_prekeys', [])]
+    new_one_time_prekeys = data.get('one_time_prekeys')
 
 
     if not user_id or user_id not in users:

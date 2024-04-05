@@ -12,12 +12,12 @@ dh_utils = DiffieHellmanUtils
 alice = User("Alice", "http://127.0.0.1:5020", max_one_time_prekeys=5)
 bob = User("Bob", "http://127.0.0.1:5020", max_one_time_prekeys=5)
 
-time.sleep(2)
+time.sleep(10)
 
 # Simulate Alice sending a message to Bob
 alice.send_message("Bob", "Hello Bob, this is Alice!")
 
-time.sleep(2)
+time.sleep(5)
 
 # Simulate fetching messages for Bob from the server
 bob.fetch_messages()
@@ -28,6 +28,8 @@ time.sleep(2)
 bob.send_message("Alice", "Hello Alice, I received your message!")
 
 time.sleep(2)
+
+alice.fetch_messages()
 
 # Simulate Bob sending a reply to Alice
 bob.send_message("Alice", "Hello Alice, new message!")

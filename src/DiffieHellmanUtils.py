@@ -74,7 +74,7 @@ class DiffieHellmanUtils:
             factors.add(number)
         return factors
 
-    def generate_prime(self, min_value=0, max_value=400):
+    def generate_prime(self, min_value=5, max_value=400):
         """Generate a prime number within a specified range."""
         while True:
             number = random.randint(min_value, max_value)
@@ -93,7 +93,7 @@ class DiffieHellmanUtils:
         derived_key = self.derive_key(shared_secret, salt, 32)
         return derived_key
 
-    def calculate_shared_secret_base64(self, prime, other_public_key, private_key, salt=None):
+    def calculate_shared_secret_base64(self, prime, private_key, other_public_key,  salt=None):
         """Calculate the shared secret using Diffie-Hellman key exchange."""
         other_public_key_int = self.base64_to_int(other_public_key)
         other_private_key_int = self.base64_to_int(private_key)
