@@ -86,9 +86,18 @@ class DiffieHellmanUtils:
         public_key = pow(generator, private_key, prime)
         return public_key
 
-    def calculate_shared_secret(self, prime, other_public_key, private_key, salt=None):
+    def calculate_shared_secret(self, prime, private_key, other_public_key, salt=None):
         """Calculate the shared secret using Diffie-Hellman key exchange."""
         shared_secret_int = pow(other_public_key, private_key, prime)
+        shared_secret = shared_secret_int.to_bytes((shared_secret_int.bit_length() + 7) // 8, byteorder='big')
+        derived_key = self.derive_key(shared_secret, salt, 32)
+        return derived_key
+
+    def calculate_shared_secret_base64(self, prime, other_public_key, private_key, salt=None):
+        """Calculate the shared secret using Diffie-Hellman key exchange."""
+        other_public_key_int = self.base64_to_int(other_public_key)
+        other_private_key_int = self.base64_to_int(private_key)
+        shared_secret_int = pow(other_public_key_int, other_private_key_int, prime)
         shared_secret = shared_secret_int.to_bytes((shared_secret_int.bit_length() + 7) // 8, byteorder='big')
         derived_key = self.derive_key(shared_secret, salt, 32)
         return derived_key
@@ -161,12 +170,31 @@ class DiffieHellmanUtils:
         public_key = self.calculate_public_key(prime, generator, private_key)
         return private_key, public_key
 
-    def generate_one_time_preKey(self, generator, prime):
+    def generate_key_pair_base64(self, generator, prime):
         """Generate a one-time preKey for ephemeral key exchanges."""
+        private_key = random.randint(2, prime - 1)
+        public_key = self.calculate_public_key(prime, generator, private_key)
+        private_key_b64 = self.int_to_base64(private_key)
+        public_key_b64 = self.int_to_base64(public_key)
+        return private_key_b64, public_key_b64
+
+    def generate_one_time_prekey(self, generator, prime):
+        """Generate a one-time preKey for ephemeral key exchanges, int."""
         private_key = random.randint(2, prime - 1)
         public_key = self.calculate_public_key(prime, generator, private_key)
         key_id = os.urandom(16)
         return key_id, private_key, public_key
+
+    def generate_one_time_prekey_base64(self, generator, prime):
+        """Generate a one-time prekey for ephemeral key exchanges , base64."""
+        private_key = random.randint(2, prime - 1)
+        public_key = self.calculate_public_key(prime, generator, private_key)
+        key_id = os.urandom(16)
+        private_key_b64 = self.int_to_base64(private_key)
+        public_key_b64 = self.int_to_base64(public_key)
+        key_id_b64 = self.bytes_to_base64(key_id)
+
+        return key_id_b64, private_key_b64, public_key_b64
 
     def combine_secrets(self, *secrets):
         """Combine multiple secrets into one using HKDF."""
@@ -201,12 +229,37 @@ class DiffieHellmanUtils:
         receiving_header_key = hkdf_receiving.derive(shared_secret)
         return sending_header_key, receiving_header_key
 
-    def generate_signing_key_pair(self):
-        """Generate signing key pair."""
-        return self.generate_key_pair(self.generator, self.prime)
-
     def serialize_and_encode_key(self, key_integer):
         """Serialize and encode a key integer to base64."""
         key_bytes = key_integer.to_bytes((key_integer.bit_length() + 7) // 8, byteorder='big')
         # key_base64 = base64.urlsafe_b64encode(key_bytes).decode('utf-8')
         return key_bytes
+
+    def int_to_base64(self, int_value):
+        """Converts an integer to a base64-encoded string."""
+        # Convert the integer to bytes
+        value_bytes = int_value.to_bytes((int_value.bit_length() + 7) // 8, byteorder='big')
+        # Encode the bytes to a base64 string
+        base64_str = base64.b64encode(value_bytes).decode('utf-8')
+        return base64_str
+
+    def base64_to_int(self, base64_str):
+        """Decodes a base64-encoded string back into an integer."""
+        if not isinstance(base64_str, str):
+            raise TypeError(f"Expected a base64 string, got {type(base64_str)} instead.")
+
+        try:
+            # Decode the base64 string to bytes
+            value_bytes = base64.b64decode(base64_str)
+        except ValueError as e:
+            # Handle base64 decoding errors
+            raise ValueError(f"Base64 decoding failed: {e}")
+
+        # Convert the bytes back to an integer
+        value_int = int.from_bytes(value_bytes, 'big')
+        return value_int
+
+    def bytes_to_base64(self, input_bytes):
+        """Converts a byte array to a base64-encoded string."""
+        base64_encoded_str = base64.b64encode(input_bytes).decode('utf-8')
+        return base64_encoded_str

@@ -25,22 +25,19 @@ def register_user():
         return jsonify({'error': 'User ID already registered'}), 409
 
     try:
-        identity_key_bytes = base64.b64decode(data['public_key']['identity_key'])
-        signed_prekey_bytes = base64.b64decode(data['public_key']['signed_prekey'])
-        one_time_prekeys_bytes_list = [base64.b64decode(pk) for pk in data['public_key']['one_time_prekeys']]  # Expecting a list of one-time prekeys
+        identity_key_base64 = data['public_key']['identity_key']
+        signed_prekey_base64 = data['public_key']['signed_prekey']
+        one_time_prekeys_base64_list = data['public_key']['one_time_prekeys']  # Expecting a list of one-time prekeys
 
-        if not user_id or not identity_key_bytes or not signed_prekey_bytes or not one_time_prekeys_bytes_list:
+        if not user_id or not identity_key_base64 or not signed_prekey_base64 or not one_time_prekeys_base64_list:
             return jsonify({'error': 'All key material is required'}), 400
 
-        identity_key = int.from_bytes(identity_key_bytes, byteorder='big')
-        signed_prekey = int.from_bytes(signed_prekey_bytes, byteorder='big')
-        one_time_prekeys = [int.from_bytes(pk, byteorder='big') for pk in one_time_prekeys_bytes_list]
 
         # Store the user's X3DH key material
         users[user_id] = {
-            'identity_key': identity_key,
-            'signed_prekey': signed_prekey,
-            'one_time_prekeys': one_time_prekeys,
+            'identity_key': identity_key_base64,
+            'signed_prekey': signed_prekey_base64,
+            'one_time_prekeys': one_time_prekeys_base64_list,
         }
 
         return jsonify({'success': True, 'message': f'User {user_id} registered successfully'}), 201

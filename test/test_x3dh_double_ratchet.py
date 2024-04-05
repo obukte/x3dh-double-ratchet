@@ -1,11 +1,12 @@
 from src.User import User
 # from src.dh_utils import DiffieHellmanUtils
 import time
+from src.DiffieHellmanUtils import DiffieHellmanUtils
 
 
 # Mock server run
 
-dh_utils = DiffieHellmanUtils()
+dh_utils = DiffieHellmanUtils
 
 # Initialize two users
 alice = User("Alice", "http://127.0.0.1:5020", max_one_time_prekeys=5)

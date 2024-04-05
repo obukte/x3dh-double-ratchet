@@ -36,17 +36,19 @@ class User:
 
     def initialize_keys(self):
         self.prime, self.generator = self.fetch_dh_parameters()
-        self.identity_private, self.identity_public = self.dh_utils.generate_key_pair(self.generator, self.prime)
-        self.prekey_public, self.prekey_private = self.dh_utils.generate_key_pair(self.generator, self.prime)
+        self.identity_private, self.identity_public = self.dh_utils.generate_key_pair_base64(self.generator, self.prime)
+        self.signed_prekey_public, self.signed_prekey_private = self.dh_utils.generate_key_pair_base64(self.generator, self.prime)
 
-        self.one_time_prekeys = [self.dh_utils.generate_one_time_preKey(self.generator, self.prime) for _ in
+        self.one_time_prekeys = [self.dh_utils.generate_one_time_prekey_base64(self.generator, self.prime) for _ in
                                  range(self.max_one_time_prekeys)]
 
         self.key_bundle = {
             'identity_key': self.identity_public,
-            'signed_prekey': self.prekey_public,
+            'signed_prekey': self.signed_prekey_public,
             'one_time_prekeys': [public_key for _, _, public_key in self.one_time_prekeys]  # List of one-time prekeys
         }
+
+        print("User: ", self.name, " initialized keys: ", self.key_bundle)
 
     def fetch_dh_parameters(self):
         response = requests.get(f'{self.server_url}/dh_parameters')
@@ -106,9 +108,9 @@ class User:
         data = {
             'user_id': self.name,
             'public_key': {
-                'identity_key': base64.b64encode(self.int_to_bytes(self.identity_public)).decode('utf-8'),
-                'signed_prekey': base64.b64encode(self.int_to_bytes(self.prekey_public)).decode('utf-8'),
-                'one_time_prekeys': [base64.b64encode(self.int_to_bytes(public_key)).decode('utf-8') for _, _, public_key in self.one_time_prekeys]
+                'identity_key': self.identity_public,
+                'signed_prekey': self.signed_prekey_public,
+                'one_time_prekeys': [public_key for _, _, public_key in self.one_time_prekeys]
             }
         }
         response = requests.post(url, json=data)
@@ -124,19 +126,13 @@ class User:
             print(f"Failed to register {self.name}. Status code: {response.status_code}")
             print(f"Resonse text: ", response.text)
 
-    def int_to_bytes(self, value):
-        # Utility method to convert an integer to bytes
-        return value.to_bytes((value.bit_length() + 7) // 8, byteorder='big')
-
     def generate_and_upload_new_prekeys(self):
-        self.one_time_prekeys = [self.dh_utils.generate_one_time_preKey(self.generator, self.prime) for _ in
+        self.one_time_prekeys = [self.dh_utils.generate_one_time_prekey_base64(self.generator, self.prime) for _ in
                                  range(self.max_one_time_prekeys)]
-        one_time_prekeys_public = [public for _, _, public in self.one_time_prekeys]
-
         data = {
             'user_id': self.name,
             'public_key': {
-                'one_time_prekeys': one_time_prekeys_public
+                'one_time_prekeys': [public for _, _, public in self.one_time_prekeys]
             }
         }
 
@@ -146,6 +142,13 @@ class User:
         else:
             print("Failed to upload new one-time prekeys.")
 
+    def get_one_time_prekey_private(self, public_key_base64):
+        """Retrieve the private part of a one-time prekey given its public part."""
+        for public_b64, private, public in self.one_time_prekeys:
+            if public_b64 == public_key_base64:
+                return private
+        return None
+
     def send_message(self, recipient_id, message):
         recipient_keys = self.fetch_public_keys(recipient_id)
         initial_package = None
@@ -153,19 +156,14 @@ class User:
             print("Failed to fetch recipient's keys.")
             return
 
-        if recipient_id not in self.shared_secrets:
+        if recipient_id not in self.shared_secrets or self.should_perform_dh_ratchet(recipient_id):
             # No shared secret indicates this is the first message to this recipient
             # Perform X3DH key agreement to establish the initial shared secret
             shared_secret, ephemeral_public_key, chosen_prekey = self.perform_x3dh_key_agreement(recipient_id,
                                                                                                  recipient_keys)
 
-            # Convert
-            ephemeral_key = base64.b64encode(self.int_to_bytes(ephemeral_public_key)).decode('utf-8')
-            chosen_prekey = base64.b64encode(self.int_to_bytes(chosen_prekey)).decode('utf-8')
-            base64.b64encode(self.int_to_bytes(ephemeral_public_key)).decode('utf-8')
-
             initial_package = {
-                'ephemeral_key': ephemeral_key,
+                'ephemeral_key': ephemeral_public_key,
                 'chosen_prekey': chosen_prekey,
             }
 
@@ -185,11 +183,6 @@ class User:
         if initial_package is not None:
             data['initial_package'] = initial_package
 
-        if self.should_perform_dh_ratchet(recipient_id):
-            self.should_perform_dh_ratchet(recipient_id)
-            # Include new DH public ket if a ratchet step was performed
-            data['new_dh_public_key'] = self.ratchet_states[recipient_id]['DHs']
-
         print(f"Sending message to {recipient_id}. Message number: {message_number}")
         response = requests.post(f'{self.server_url}/send_message', json=data)
         if response.status_code == 200:
@@ -198,15 +191,14 @@ class User:
             print(f"Failed to send message: {response.json()}")
 
     def receive_message(self, sender_id, data):
-        print(f"Attempting to decrypt message at: {self.name }from {sender_id}")
+        print(f"Attempting to decrypt message at: {self.name}from {sender_id}")
         if sender_id not in self.ratchet_states:
             print(f"{self.name} has no ratchet state for {sender_id}. Starting setup_initial_ratchet_state().")
-            self.setup_initial_ratchet_state(sender_id, data['initial_package'])
+            self.handle_x3dh_initiation_and_decrypt_first_message(sender_id, data)
 
-        their_dh_public = self.ratchet_states[sender_id]['DHr']
         # get ciphertext from data
-        ciphertext = base64.b64decode(data['encrypted_message'])
-        nonce = base64.b64decode(data['nonce'])
+        ciphertext = data['encrypted_message']
+        nonce = data['nonce']
 
         # Convert message number from string to integer
         try:
@@ -215,22 +207,11 @@ class User:
             print("Invalid message number received.")
             return
 
-        # Check for initial package to set up ratchet state for first-time communication
-        if 'initial_package' in data:
-            print(f"Setting up initial ratchet state for {sender_id} with initial package")
-            self.setup_initial_ratchet_state(sender_id, data['initial_package'])
-
         if not ciphertext or not nonce or message_number is None:
             print("Missing data in the received message.")
             return
 
-        message_number = int(message_number)
         expected_message_number = self.ratchet_states[sender_id]['Nr']
-
-        # if message_number is None:
-        #     print("Message number is missing in the received data.")
-        #     return
-        # message_number = int(message_number)
 
         if 'new_dh_public_key' in data:
             # A new DH public ket indicates that the sender has performed a DH ratcher step
@@ -241,13 +222,13 @@ class User:
         decrypted_message = None
         if message_number == expected_message_number:
             # Decrypt message with current chain key
-            decrypted_message = self.decrypt_with_chain_key(sender_id,their_dh_public, message_number, ciphertext, nonce)
+            decrypted_message = self.decrypt_with_chain_key(sender_id, message_number, ciphertext, nonce)
             if decrypted_message is not None:
                 self.ratchet_states[sender_id]['Nr'] += 1
 
         elif message_number > expected_message_number:
             # Attempt to decrypt with skipped message key
-            decrypted_message = self.decrypt_skipped_message(sender_id,their_dh_public,message_number, ciphertext, nonce)
+            decrypted_message = self.decrypt_skipped_message(sender_id,message_number, ciphertext, nonce)
 
         if decrypted_message is not None:
             print(f"Received decrypted message from {sender_id}: {decrypted_message}")
@@ -257,42 +238,11 @@ class User:
             # Handle decryption failure (possibly due to out-of order message)
             print("Failed to decrypt message, attempting to use skipped message keys")
             # Attempt to decrypt using skipped message keys if any
-            decrypted_message = self.decrypt_skipped_message(sender_id, their_dh_public, message_number, ciphertext, nonce)
+            decrypted_message = self.decrypt_skipped_message(sender_id,  message_number, ciphertext, nonce)
             if decrypted_message:
                 print(f"Received decrypted message {sender_id} using skipped key: {decrypted_message}")
             else:
                 print("Failed to decrypt message using skipped keys")
-
-    def setup_initial_ratchet_state(self, sender_id, initial_package):
-        print(f"setup_initial_ratchet_state is kicked at {self.name} for the {sender_id}.")
-        # Extract the ephemeral key and chosen prekey from the initial package
-        ephemeral_public_b64 = initial_package.get('ephemeral_key')
-        chosen_prekey_b64 = initial_package.get('chosen_prekey')
-
-        # Convert from Base64 to integers
-        ephemeral_public = int.from_bytes(base64.b64decode(ephemeral_public_b64),
-                                          'big') if ephemeral_public_b64 else None
-        chosen_prekey = int.from_bytes(base64.b64decode(chosen_prekey_b64), 'big') if chosen_prekey_b64 else None
-
-        # Fetch sender's public keys again, if not available. This is just for safety, in practice, this should already be available
-        if sender_id not in self.shared_secrets:
-            recipient_keys = self.fetch_public_keys(sender_id)
-            if not recipient_keys:
-                print(f"Unable to fetch public keys for {sender_id}. Cannot initialize double ratchet.")
-                return
-        else:
-            recipient_keys = {
-                'identity_key': self.shared_secrets[sender_id]['identity_key'],
-                'signed_prekey': self.shared_secrets[sender_id]['signed_prekey'],
-                # The 'one_time_prekey' might not be directly stored in 'shared_secrets', adjust as needed
-            }
-
-        # Perform X3DH key agreement using the ephemeral key and the prekeys
-        shared_secret, _, _ = self.perform_x3dh_key_agreement(sender_id, {
-            'identity_key': recipient_keys['identity_key'],
-            'signed_prekey': recipient_keys['signed_prekey'],
-            'one_time_prekey': chosen_prekey
-        }, ephemeral_public)
 
     def update_receiving_chain_key(self, sender_id):
         # Update the receiving chain key (CKr) using KDF and increment Nr
@@ -322,17 +272,22 @@ class User:
     def perform_x3dh_key_agreement(self, recipient_id, recipient_keys):
 
         chosen_prekey = None
-        ephemeral_private_key, ephemeral_public_key = self.dh_utils.generate_key_pair(self.generator, self.prime)
 
-        print(f"{self.name} is performing X3DH key agreement with {recipient_id}. {self.name}'s new 'ephemeral_public_key': {ephemeral_public_key}, 'identity_private':{self.identity_private}, 'signed_prekey_private': {self.prekey_private} )")
+        # Generate ephemeral key pair
+        ephemeral_private_key, ephemeral_public_key = self.dh_utils.generate_key_pair_base64(self.generator, self.prime)
 
-        DH1 = self.dh_utils.calculate_shared_secret(self.prime, self.identity_private, recipient_keys['signed_prekey'])
-        DH2 = self.dh_utils.calculate_shared_secret(self.prime, self.prekey_private, recipient_keys['identity_key'])
-        DH3 = self.dh_utils.calculate_shared_secret(self.prime, ephemeral_private_key, recipient_keys['signed_prekey'])
+        print(
+            f"\t-DH1-{self.name}'s identity_private: {self.identity_private} with {recipient_id}'s signed_prekey: {recipient_keys['signed_prekey']}")
+        print(
+            f"\t-DH2-{self.name}'s signed_prekey_private:{self.signed_prekey_private} with {recipient_id}'s identity_key: {recipient_keys['identity_key']}")
+        print(
+            f"\t-DH3-{self.name}'s ephemeral_private_key: {ephemeral_private_key} with {recipient_id}'s signed_prekey: {recipient_keys['signed_prekey']}")
+        print(
+            f"{self.name} is performing X3DH key agreement with {recipient_id}. {self.name}'s new 'ephemeral_public_key': {ephemeral_public_key}, 'identity_private':{self.identity_private}, 'signed_prekey_private': {self.signed_prekey_private} )")
 
-        print(f"\t-DH1-{self.name}'s identity_private: {self.identity_private} with {recipient_id}'s signed_prekey: {recipient_keys['signed_prekey']}: {DH1.hex()}")
-        print(f"\t-DH2-{self.name}'s signed_prekey_private:{self.prekey_private} with {recipient_id}'s identity_key: {recipient_keys['identity_key']}: {DH2.hex()}")
-        print(f"\t-DH3-{self.name}'s ephemeral_private_key: {ephemeral_private_key} with {recipient_id}'s signed_prekey: {recipient_keys['signed_prekey']}: {DH3.hex()}")
+        DH1 = self.dh_utils.calculate_shared_secret_base64(self.prime, self.identity_private, recipient_keys['signed_prekey'])
+        DH2 = self.dh_utils.calculate_shared_secret_base64(self.prime, ephemeral_private_key, recipient_keys['identity_key'])
+        DH3 = self.dh_utils.calculate_shared_secret_base64(self.prime, ephemeral_private_key, recipient_keys['signed_prekey'])
 
         # Optional DH4
         DH4 = None
@@ -344,9 +299,6 @@ class User:
             print(f"\t-DH4-{self.name}'s ephemeral_private_key and {recipient_id}'s chosen_prekey_public: {DH4.hex()}")
         else:
             print(f"{self.name} did not used one-time prekey used for X3DH with: ", recipient_id)
-            # maybe
-            # Handle the case where no one-time prekey is left or provided
-            # print("Warning: No one-time prekey available. This might affect forward secrecy.")
 
         # Combine the DH secrets to derive the shared secret
         shared_secret_components = [DH1, DH2, DH3] + ([DH4] if DH4 else [])
@@ -363,6 +315,41 @@ class User:
         self.initiate_double_ratchet(recipient_id, shared_secret, ephemeral_public_key, recipient_keys['identity_key'])
 
         return shared_secret, ephemeral_public_key, chosen_prekey if chosen_prekey else None
+
+    def handle_x3dh_initiation_and_decrypt_first_message(self, data):
+        sender_id = data['sender_id']
+        recipient_id = data['recipient_id']
+        encrypted_message_base64 = data['encrypted_message']
+        nonce_base64 = data['nonce']
+        initial_package = data.get('initial_package', {})
+
+        # Extract ephemeral public key and chosen prekey from the initial package
+        ephemeral_public_key_base64 = initial_package.get('ephemeral_key')
+        chosen_prekey_base64 = initial_package.get('chosen_prekey')
+
+        # Fetch Alice's public keys if not already available
+        recipient_keys = self.fetch_public_keys(sender_id)
+        if not recipient_keys:
+            print(f"Unable to fetch public keys for {sender_id}. Cannot proceed with X3DH.")
+            return None
+
+        # Perform the necessary DH calculations
+        DH1 = self.dh_utils.calculate_shared_secret_base64(self.prime, self.signed_prekey_private, ephemeral_public_key_base64)
+        DH2 = self.dh_utils.calculate_shared_secret_base64(self.prime, self.identity_private, recipient_keys['identity_key'])
+        DH3 = self.dh_utils.calculate_shared_secret_base64(self.prime, self.signed_prekey_private, ephemeral_public_key_base64)
+
+        DH4 = None
+        if chosen_prekey_base64:
+            # If a one-time prekey was used, perform the DH calculation
+            one_time_prekey_private = self.get_one_time_prekey_private(chosen_prekey_base64)
+            DH4 = self.dh_utils.calculate_shared_secret_base64(self.prime, one_time_prekey_private, ephemeral_public_key_base64)
+
+        # Combine the DH results to derive the shared secret
+        shared_secret_components = [DH1, DH2, DH3] + ([DH4] if DH4 else [])
+        shared_secret = self.dh_utils.combine_secrets(*shared_secret_components)
+
+        # Initialize or update the double ratchet mechanism
+        self.initiate_double_ratchet(sender_id, shared_secret)
 
     def initiate_double_ratchet(self, recipient_id, shared_secret, our_dh_public, their_dh_public):
         print(
@@ -452,11 +439,13 @@ class User:
         # Store the message key for later use
         self.ratchet_states[sender_id]['MKSKIPPED'][(their_dh_public, message_number)] = message_key
 
-    def decrypt_skipped_message(self, sender_id, their_dh_public, message_number, ciphertext, nonce):
+    def decrypt_skipped_message(self, sender_id, message_number, ciphertext, nonce):
         # Check for existence of skipped messages for this sender
         if sender_id not in self.ratchet_states or 'MKSKIPPED' not in self.ratchet_states[sender_id]:
             print(f"No skipped messages for {sender_id}")
             return None
+
+        their_dh_public = self.ratchet_states[sender_id]['DHr']
 
         # Retrieve the message key from MKSKIPPED if available using a composite key
         composite_key = (their_dh_public, message_number)
@@ -475,7 +464,7 @@ class User:
             print(f"Decryption of skipped message failed: {e}")
             return None
 
-    def decrypt_with_chain_key(self, sender_id, their_dh_public, message_number, ciphertext, nonce):
+    def decrypt_with_chain_key(self, sender_id, message_number, ciphertext, nonce):
         if sender_id not in self.ratchet_states:
             raise ValueError(f"No ratchet state for sender {sender_id}")
 
@@ -488,7 +477,7 @@ class User:
         if message_number != current_message_number:
             print(
                 f"Message number {message_number} does not match expected number {current_message_number}. Attempting to decrypt with skipped key.")
-            return self.decrypt_skipped_message(sender_id, their_dh_public, message_number, ciphertext, nonce)
+            return self.decrypt_skipped_message(sender_id,  message_number, ciphertext, nonce)
 
         # Use the current receiving chain key for decryption
         chain_key = self.ratchet_states[sender_id]['CKr']
