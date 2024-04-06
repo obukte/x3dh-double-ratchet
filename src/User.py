@@ -28,6 +28,7 @@ class User:
         self.max_one_time_prekeys = max_one_time_prekeys
         self.shared_secrets = {}
         self.ratchet_states = {}
+        self.public_keys_cache = {}
         self.initialize_keys()
 
         self.one_time_prekey_private = [private for _, private, _ in self.one_time_prekeys]
@@ -62,6 +63,11 @@ class User:
             raise Exception("Failed to fetch DH parameters from the server.")
 
     def fetch_public_keys(self, user_id):
+        # Check the cache first
+        if user_id in self.public_keys_cache:
+            print(f"Using cached public keys for {user_id}")
+            return self.public_keys_cache[user_id]
+
         url = f'{self.server_url}/get_keys/{user_id}'
         response = requests.get(url)
         if response.status_code == 200:
@@ -69,15 +75,18 @@ class User:
 
             # Check if the server indicates that rekeying is needed
             if public_keys.get('rekey_needed', False):
-                print(f"Server indicates to {self.name} that rekeying is needed. Generating and uploading new one-time prekeys.")
+                print(
+                    f"Server indicates to {self.name} that rekeying is needed. Generating and uploading new one-time prekeys.")
                 self.generate_and_upload_new_prekeys()
 
-            print(f"User {self.name} fetched public keys for {user_id}: {public_keys}")
-            return {
+            # Cache the fetched keys
+            self.public_keys_cache[user_id] = {
                 'identity_key': public_keys['identity_key'],
                 'signed_prekey': public_keys['signed_prekey'],
                 'one_time_prekey': public_keys.get('one_time_prekey')
             }
+            print(f"User {self.name} fetched and cached public keys for {user_id}: {public_keys}")
+            return self.public_keys_cache[user_id]
         else:
             print(f"Failed to fetch keys for {user_id}")
             return None
@@ -157,6 +166,7 @@ class User:
 
     def send_message(self, recipient_id, message):
         recipient_keys = self.fetch_public_keys(recipient_id)
+
         initial_package = None
         if recipient_keys is None:
             print("Failed to fetch recipient's keys.")
@@ -199,8 +209,10 @@ class User:
 
     def receive_message(self, sender_id, data):
         print(f"Attempting to decrypt message at: {self.name}from {sender_id}")
-        if sender_id not in self.ratchet_states:
+        initial_package_exists = 'initial_package' in data
+        if sender_id not in self.ratchet_states or initial_package_exists:
             print(f"{self.name} has no ratchet state for {sender_id}. Starting setup_initial_ratchet_state().")
+            self.pre_generate_future_message_keys(sender_id)
             self.handle_x3dh_and_initiate_double_ratchet(data)
 
         # get ciphertext from data
@@ -500,6 +512,8 @@ class User:
         return False
 
     def decrypt_skipped_message(self, sender_id, message_number, ciphertext, nonce):
+        print(f"Trying to decrypt with skipped messages")
+
         # Ensure this sender's state exists
         if sender_id not in self.ratchet_states:
             print(f"No ratchet state for {sender_id}")
@@ -536,18 +550,57 @@ class User:
             return None
 
     def handle_future_message(self, sender_id, message_number):
+
+        print(f"Creating skipped messages")
         current_state = self.ratchet_states[sender_id]
         chain_key = current_state['CKr']
+        their_dh_public = current_state['DHr']
+
+        # Ensure MKSKIPPED is initialized as a dictionary
+        if 'MKSKIPPED' not in current_state:
+            current_state['MKSKIPPED'] = {}
 
         # Simulate the generation of future message keys up to the received message number
         while current_state.get('Nr', 0) < message_number:
             message_key, chain_key = self.derive_message_key(chain_key)
             # Store the message key if it's for a future message
-            current_state['MKSKIPPED'][current_state['Nr']] = message_key
+            composite_key = (their_dh_public, current_state['Nr'])
+            current_state['MKSKIPPED'][composite_key] = message_key
             current_state['Nr'] += 1  # Increment Nr to simulate advancing through messages
 
         # Update the chain key to the latest generated one
         current_state['CKr'] = chain_key
+
+    def pre_generate_future_message_keys(self, sender_id):
+        if sender_id not in self.ratchet_states:
+            print(f"No ratchet state for {sender_id}, unable to pre-generate future message keys.")
+            return
+
+        print(f"Pre-generating future message keys for {sender_id}.")
+        current_state = self.ratchet_states[sender_id]
+        chain_key = current_state['CKr']
+        their_dh_public = current_state['DHr']
+
+        # Ensure MKSKIPPED is initialized as a dictionary
+        if 'MKSKIPPED' not in current_state:
+            current_state['MKSKIPPED'] = {}
+
+
+        # Simulate the generation of future message keys up to the future_message_limit
+        while current_state.get('Nr', 0) <= DH_RATCHET_UPDATE_THRESHOLD:
+            message_key, new_chain_key = self.derive_message_key(chain_key)
+            # Store the message key for a future message
+            composite_key = (their_dh_public, current_state['Nr'])
+            current_state['MKSKIPPED'][composite_key] = message_key
+            current_state['Nr'] += 1  # Increment Nr to simulate advancing through messages
+
+            # Update the chain key for the next iteration
+            chain_key = new_chain_key
+
+        # Update the chain key to the latest generated one
+        current_state['CKr'] = chain_key
+        print(
+            f"Finished pre-generating future message keys up to message number {DH_RATCHET_UPDATE_THRESHOLD} for {sender_id}.")
 
     def decrypt_with_chain_key(self, sender_id, message_number, ciphertext_base64, nonce_base64):
         if sender_id not in self.ratchet_states:
