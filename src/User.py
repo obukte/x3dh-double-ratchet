@@ -10,7 +10,7 @@ import base64
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes, padding, serialization
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from src.DiffieHellmanUtils import DiffieHellmanUtils
+from DiffieHellmanUtils import DiffieHellmanUtils
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from datetime import time
 
@@ -95,13 +95,18 @@ class User:
         """Fetch new messages from the server and process them using receive_message."""
         url = f'{self.server_url}/fetch_messages/{self.name}'
         response = requests.get(url)
+        decrypted_messages = []
         if response.status_code == 200:
             messages = response.json().get('messages', [])
             for message in messages:
                 print(f"Processing message from {message['sender_id']}: {message}")
-                self.receive_message(message['sender_id'], message)
+                sender_id, result = self.receive_message(message['sender_id'], message)
+                if result is not None:
+                    decrypted_messages.append((sender_id,result))
+
         else:
             print("Failed to fetch messages:", response.json())
+        return decrypted_messages
 
     def start_polling_for_messages(self, interval=5):
         """Start polling the server for messages at a specified interval (in seconds)."""
@@ -170,7 +175,7 @@ class User:
         initial_package = None
         if recipient_keys is None:
             print("Failed to fetch recipient's keys.")
-            return
+            return recipient_id, "Failed to fetch recipient's keys."
 
         if recipient_id not in self.shared_secrets or self.should_perform_dh_ratchet(recipient_id):
             print(f"{self.name} doesn't have {recipient_id} in shared secretes?")
@@ -204,8 +209,10 @@ class User:
         response = requests.post(f'{self.server_url}/send_message', json=data)
         if response.status_code == 200:
             print("Message sent successfully.")
+            return recipient_id, message
         else:
             print(f"Failed to send message: {response.json()}")
+            return recipient_id, f"Failed to send message: {response.json()}"
 
     def receive_message(self, sender_id, data):
         print(f"Attempting to decrypt message at: {self.name}from {sender_id}")
@@ -224,11 +231,11 @@ class User:
             message_number = int(data.get('message_number'))
         except (ValueError, TypeError):
             print("Invalid message number received.")
-            return
+            return sender_id, None
 
         if not ciphertext or not nonce or message_number is None:
             print("Missing data in the received message.")
-            return
+            return sender_id, None
 
         expected_message_number = self.ratchet_states[sender_id]['Nr']
 
@@ -249,6 +256,7 @@ class User:
 
         if decrypted_message is not None:
             print(f"\n---------------\n{self.name} received message from {sender_id} and decrypted !!!! \ndecrypted message: {decrypted_message}\n---------------\n")
+            return sender_id, decrypted_message
         else:
             # Handle decryption failure (possibly due to out-of order message)
             print("Failed to decrypt message, attempting to use skipped message keys")
@@ -256,8 +264,10 @@ class User:
             decrypted_message = self.decrypt_skipped_message(sender_id,  message_number, ciphertext, nonce)
             if decrypted_message:
                 print(f"Received decrypted message {sender_id} using skipped key: {decrypted_message}")
+                return sender_id, decrypted_message
             else:
                 print("Failed to decrypt message using skipped keys")
+                return sender_id, None
 
     def derive_message_key(self, chain_key):
         # Use HKDF to derive new keys from the chain key
