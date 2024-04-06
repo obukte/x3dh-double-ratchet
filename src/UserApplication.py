@@ -20,7 +20,6 @@ class UserApplication:
         username = simpledialog.askstring("Input", "What is your username?")
         if username:
             self.user = User(username, "http://127.0.0.1:5020")
-            print(self.user)  # For demonstration
             self.label.config(text=f"User: {self.user.name}")
             self.start_button.pack_forget()  # Hide the start button
             self.init_chat_ui()

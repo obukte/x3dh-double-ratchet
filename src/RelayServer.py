@@ -1,7 +1,5 @@
 #!/usr/bin/env python
 # coding: utf-8
-import base64
-
 from flask import Flask, request, jsonify
 from DiffieHellmanUtils import DiffieHellmanUtils
 
