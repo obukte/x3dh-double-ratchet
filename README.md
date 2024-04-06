@@ -78,3 +78,6 @@ Repeat the command in the second terminal to simulate another user.
 ### Testing
 
 Testing involves verifying that the RelayServer and UserApplications can communicate effectively and that messages are securely encrypted and decrypted as intended. There are no automated test scripts provided in the `/test` directory for end-to-end testing; manual testing by running multiple instances of the UserApplication as described above is recommended.
+
+Here is an sample application run screenshot: 
+![Example Run](resources/images/sample_application_run.png "Example run image")
