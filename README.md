@@ -30,4 +30,7 @@ pip install -r requirements.txt
 
 cd src
 
-python3 relay_server.py
+python3 RelayServer.py
+
+sudo lsof -i :5020
+kill -9 PID
