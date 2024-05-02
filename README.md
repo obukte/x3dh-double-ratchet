@@ -65,7 +65,7 @@ Replace `[PID]` with the process ID using the port `5020`.
 2. **Launch User Applications**: In two separate terminal windows (each with the virtual environment activated), navigate to the `src` directory and start the UserApplication:
 
 ```bash
-python3 UserApplication.py
+python3 Application.py
 ```
 
 Repeat the command in the second terminal to simulate another user.
