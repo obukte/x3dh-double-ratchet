@@ -15,7 +15,7 @@ The foundational Diffie-Hellman Key Exchange protocol was introduced in the semi
 
 The project is structured into several key components:
 
-- `x3dh-double-ratchet/src/UserApplication.py`: A user interface for text messaging, demonstrating the application of the secure messaging protocols.
+- `x3dh-double-ratchet/src/Application.py`: A user interface for text messaging, demonstrating the application of the secure messaging protocols.
 - `x3dh-double-ratchet/src/User.py`: The user class containing the implementation of the X3DH and Double Ratcheting protocol functions.
 - `x3dh-double-ratchet/src/DiffieHellmanUtils.py`: Utilities for Diffie-Hellman key creation, shared secret calculations, and other cryptographic functions.
 - `x3dh-double-ratchet/src/RelayServer.py`: A Flask-based relay web server that provides the underlying messaging infrastructure.

@@ -1,6 +1,6 @@
 from multiprocessing import Process
 import tkinter as tk
-from src.UserApplication import UserApplication  # Adjust the import based on your script's structure
+from src.Application import Application  # Adjust the import based on your script's structure
 
 def run_app():
     root = tk.Tk()
