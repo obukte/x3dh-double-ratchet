@@ -36,7 +36,6 @@ class DiffieHellmanUtils:
         if n % 2 == 0:
             return False
 
-        # Write n as d*2^s + 1
         s, d = 0, n - 1
         while d % 2 == 0:
             d //= 2
@@ -123,13 +122,22 @@ class DiffieHellmanUtils:
                 return number
             number += 2  # increment by 2 to ensure we only check odd numbers
 
-    def generate_prime(self):
+    def generate_prime_128_bit(self):
         """Generate a 128-bit prime number using cryptographically secure randomness."""
         while True:
             # Generate a random 128-bit number ensuring it's odd and the highest bit is set
             number = random.getrandbits(128)
             number |= (1 << 127) | 1
             if self.is_prime_miller_rabin(number, k=64):
+                return number
+
+    def generate_prime(self):
+        """Generate a 64-bit prime number using cryptographically secure randomness."""
+        while True:
+            # Generate a random 64-bit number ensuring it's odd and the highest bit is set
+            number = random.getrandbits(64)
+            number |= (1 << 63) | 1
+            if self.is_prime_miller_rabin(number, k=20):
                 return number
 
     def calculate_public_key(self, prime, generator, private_key):
