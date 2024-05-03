@@ -27,6 +27,38 @@ class DiffieHellmanUtils:
             i += 6
         return True
 
+    def is_prime_miller_rabin(self, n, k=40):
+        """Use the Miller-Rabin primality test to determine if a number is prime."""
+        if n <= 1:
+            return False
+        if n == 2:
+            return True
+        if n % 2 == 0:
+            return False
+
+        # Write n as d*2^s + 1
+        s, d = 0, n - 1
+        while d % 2 == 0:
+            d //= 2
+            s += 1
+
+        def trial_composite(a):
+            """Perform a Miller-Rabin trial."""
+            x = pow(a, d, n)
+            if x == 1 or x == n - 1:
+                return False
+            for _ in range(s - 1):
+                x = pow(x, 2, n)
+                if x == n - 1:
+                    return False
+            return True
+
+        for _ in range(k):  # Number of trials
+            a = random.randrange(2, n - 1)
+            if trial_composite(a):
+                return False
+        return True
+
     def is_primitive_root(self, number, prime_num):
         """Check if a number is a primitive root modulo a given prime."""
         if not self.is_prime(prime_num):
@@ -74,11 +106,30 @@ class DiffieHellmanUtils:
             factors.add(number)
         return factors
 
-    def generate_prime(self, min_value=5, max_value=400):
+    def generate_prime_random_small(self, min_value=5, max_value=400):
         """Generate a prime number within a specified range."""
         while True:
             number = random.randint(min_value, max_value)
             if self.is_prime(number):
+                return number
+
+    def generate_prime_deterministic(self, start_value=2147483647):
+        """Generate a 32-bit prime number starting from a specific value, checking each odd number."""
+        number = start_value
+        if number % 2 == 0:
+            number += 1  # make sure it starts with an odd number
+        while True:
+            if self.is_prime_miller_rabin(number, k=40):
+                return number
+            number += 2  # increment by 2 to ensure we only check odd numbers
+
+    def generate_prime(self):
+        """Generate a 128-bit prime number using cryptographically secure randomness."""
+        while True:
+            # Generate a random 128-bit number ensuring it's odd and the highest bit is set
+            number = random.getrandbits(128)
+            number |= (1 << 127) | 1
+            if self.is_prime_miller_rabin(number, k=64):
                 return number
 
     def calculate_public_key(self, prime, generator, private_key):
